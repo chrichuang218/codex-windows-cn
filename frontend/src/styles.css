@@ -292,3 +292,29 @@ h2 {
   border-radius: inherit;
   background: linear-gradient(90deg, #38bdf8, #86efac);
 }
+
+.launch-panel {
+  margin-top: 18px;
+}
+
+.launch-status {
+  display: grid;
+  gap: 8px;
+}
+
+.launch-status strong {
+  color: #eef4ff;
+  font-size: 14px;
+}
+
+.launch-status code {
+  display: block;
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(150, 164, 184, 0.16);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(8, 11, 16, 0.62);
+  color: #cbd5e1;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+}

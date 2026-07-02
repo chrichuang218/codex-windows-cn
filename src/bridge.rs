@@ -1,8 +1,9 @@
-use crate::config::InstallMode;
+use crate::config::{Config, InstallMode};
 use crate::installer::{self, InstallMsg, InstallOptions};
+use crate::proxy;
 use crate::store::Fetcher;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +99,21 @@ pub enum InstallEventKind {
     Error,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyLaunchStatus {
+    pub can_launch: bool,
+    pub codex_exe: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyLaunchResult {
+    pub launched: bool,
+    pub message: String,
+}
+
 pub fn app_status() -> AppStatus {
     AppStatus {
         product_name: "Codex Windows 中文助手",
@@ -109,6 +125,21 @@ pub fn app_status() -> AppStatus {
             MainPath::Uninstall,
             MainPath::LauncherSelfUpdate,
         ],
+    }
+}
+
+pub fn proxy_launch_status(root: &Path, cfg: &Config) -> ProxyLaunchStatus {
+    match proxy::resolve_codex_exe(root, cfg.use_current_junction) {
+        Some(exe) => ProxyLaunchStatus {
+            can_launch: true,
+            codex_exe: Some(exe.to_string_lossy().into_owned()),
+            message: "可以启动 Codex".into(),
+        },
+        None => ProxyLaunchStatus {
+            can_launch: false,
+            codex_exe: None,
+            message: "未找到可启动的 Codex.exe".into(),
+        },
     }
 }
 

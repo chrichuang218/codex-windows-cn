@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import type { AppBridge, AppStatus, InstallEvent, InstallerDefaults, InstallMode } from "./bridge";
+import type {
+  AppBridge,
+  AppStatus,
+  InstallEvent,
+  InstallerDefaults,
+  InstallMode,
+  ProxyLaunchStatus
+} from "./bridge";
 import { mainPathLabels, tauriBridge } from "./bridge";
 import "./styles.css";
 
@@ -10,19 +17,23 @@ type AppProps = {
 export function App({ bridge = tauriBridge }: AppProps) {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [installerDefaults, setInstallerDefaults] = useState<InstallerDefaults | null>(null);
+  const [proxyStatus, setProxyStatus] = useState<ProxyLaunchStatus | null>(null);
   const [selectedMode, setSelectedMode] = useState<InstallMode | null>(null);
   const [installState, setInstallState] = useState<"idle" | "starting" | "running">("idle");
   const [installEvent, setInstallEvent] = useState<InstallEvent | null>(null);
+  const [launchState, setLaunchState] = useState<"idle" | "launching">("idle");
+  const [launchMessage, setLaunchMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
 
-    Promise.all([bridge.getAppStatus(), bridge.getInstallerDefaults()])
-      .then(([nextStatus, nextInstallerDefaults]) => {
+    Promise.all([bridge.getAppStatus(), bridge.getInstallerDefaults(), bridge.getProxyLaunchStatus()])
+      .then(([nextStatus, nextInstallerDefaults, nextProxyStatus]) => {
         if (alive) {
           setStatus(nextStatus);
           setInstallerDefaults(nextInstallerDefaults);
+          setProxyStatus(nextProxyStatus);
           setSelectedMode(nextInstallerDefaults.recommendedMode);
         }
       })
@@ -51,7 +62,7 @@ export function App({ bridge = tauriBridge }: AppProps) {
     );
   }
 
-  if (!status || !installerDefaults || !selectedMode) {
+  if (!status || !installerDefaults || !proxyStatus || !selectedMode) {
     return (
       <main className="shell shell-center">
         <section className="notice">
@@ -91,6 +102,19 @@ export function App({ bridge = tauriBridge }: AppProps) {
     installEvent?.progress === null || installEvent?.progress === undefined
       ? null
       : Math.round(installEvent.progress * 100);
+
+  const launchCodex = async () => {
+    setLaunchState("launching");
+    setLaunchMessage(null);
+    try {
+      const result = await bridge.launchCodex();
+      setLaunchMessage(result.message);
+    } catch (cause) {
+      setLaunchMessage(cause instanceof Error ? cause.message : "启动 Codex 失败");
+    } finally {
+      setLaunchState("idle");
+    }
+  };
 
   return (
     <main className="shell">
@@ -180,6 +204,30 @@ export function App({ bridge = tauriBridge }: AppProps) {
             ) : null}
           </div>
         ) : null}
+      </section>
+
+      <section className="install-panel launch-panel" aria-label="代理启动">
+        <div className="section-heading">
+          <p className="eyebrow">主路径 2</p>
+          <h2>启动 Codex</h2>
+        </div>
+
+        <div className="launch-status">
+          <strong>{proxyStatus.message}</strong>
+          {proxyStatus.codexExe ? <code>{proxyStatus.codexExe}</code> : null}
+        </div>
+
+        <div className="install-actions">
+          <button
+            className="primary-button"
+            disabled={!proxyStatus.canLaunch || launchState !== "idle"}
+            onClick={launchCodex}
+            type="button"
+          >
+            {launchState === "idle" ? "启动" : "启动中"}
+          </button>
+          {launchMessage ? <span>{launchMessage}</span> : null}
+        </div>
       </section>
     </main>
   );

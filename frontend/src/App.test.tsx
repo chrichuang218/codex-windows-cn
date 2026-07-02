@@ -58,7 +58,13 @@ describe("Codex Windows 中文助手 shell", () => {
       }),
       getInstallerDefaults: async () => installerDefaults,
       startInstall: async () => ({ accepted: true }),
-      onInstallEvent: () => () => {}
+      onInstallEvent: () => () => {},
+      getProxyLaunchStatus: async () => ({
+        canLaunch: true,
+        codexExe: "C:\\Users\\tester\\AppData\\Local\\Codex\\versions\\1.2.0\\Codex.exe",
+        message: "可以启动 Codex"
+      }),
+      launchCodex: async () => ({ launched: true, message: "已启动 Codex" })
     };
 
     render(<App bridge={bridge} />);
@@ -81,7 +87,13 @@ describe("Codex Windows 中文助手 shell", () => {
       }),
       getInstallerDefaults: async () => installerDefaults,
       startInstall: async () => ({ accepted: true }),
-      onInstallEvent: () => () => {}
+      onInstallEvent: () => () => {},
+      getProxyLaunchStatus: async () => ({
+        canLaunch: true,
+        codexExe: "C:\\Users\\tester\\AppData\\Local\\Codex\\versions\\1.2.0\\Codex.exe",
+        message: "可以启动 Codex"
+      }),
+      launchCodex: async () => ({ launched: true, message: "已启动 Codex" })
     };
 
     render(<App bridge={bridge} />);
@@ -110,7 +122,13 @@ describe("Codex Windows 中文助手 shell", () => {
         submittedRoot = request.root;
         return { accepted: true };
       },
-      onInstallEvent: () => () => {}
+      onInstallEvent: () => () => {},
+      getProxyLaunchStatus: async () => ({
+        canLaunch: true,
+        codexExe: "C:\\Users\\tester\\AppData\\Local\\Codex\\versions\\1.2.0\\Codex.exe",
+        message: "可以启动 Codex"
+      }),
+      launchCodex: async () => ({ launched: true, message: "已启动 Codex" })
     };
 
     render(<App bridge={bridge} />);
@@ -143,7 +161,13 @@ describe("Codex Windows 中文助手 shell", () => {
       onInstallEvent: (handler) => {
         emitInstallEvent = handler;
         return () => {};
-      }
+      },
+      getProxyLaunchStatus: async () => ({
+        canLaunch: true,
+        codexExe: "C:\\Users\\tester\\AppData\\Local\\Codex\\versions\\1.2.0\\Codex.exe",
+        message: "可以启动 Codex"
+      }),
+      launchCodex: async () => ({ launched: true, message: "已启动 Codex" })
     };
 
     render(<App bridge={bridge} />);
@@ -175,5 +199,39 @@ describe("Codex Windows 中文助手 shell", () => {
     });
 
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "35");
+  });
+
+  test("renders and starts the proxy launch path", async () => {
+    let launched = false;
+    const bridge: AppBridge = {
+      getAppStatus: async () => ({
+        productName: "Codex Windows 中文助手",
+        v1Boundary: "中文安装更新助手",
+        mainPaths: ["install", "proxyLaunch", "checkAndUpdate", "uninstall", "launcherSelfUpdate"]
+      }),
+      getInstallerDefaults: async () => installerDefaults,
+      startInstall: async () => ({ accepted: true }),
+      onInstallEvent: () => () => {},
+      getProxyLaunchStatus: async () => ({
+        canLaunch: true,
+        codexExe: "C:\\Users\\tester\\AppData\\Local\\Codex\\versions\\1.2.0\\Codex.exe",
+        message: "可以启动 Codex"
+      }),
+      launchCodex: async () => {
+        launched = true;
+        return { launched: true, message: "已启动 Codex" };
+      }
+    };
+
+    render(<App bridge={bridge} />);
+
+    expect(await screen.findByRole("heading", { name: "启动 Codex" })).toBeVisible();
+    expect(screen.getByText("可以启动 Codex")).toBeVisible();
+    expect(screen.getByText(/versions\\1.2.0\\Codex.exe/)).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "启动" }));
+
+    expect(await screen.findByText("已启动 Codex")).toBeVisible();
+    expect(launched).toBe(true);
   });
 });

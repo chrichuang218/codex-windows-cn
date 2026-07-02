@@ -1,8 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use codex_windows_cn::{
-    bridge::{self, AppStatus, InstallRequest, InstallStart, InstallerDefaults},
-    installer,
+    bridge::{
+        self, AppStatus, InstallRequest, InstallStart, InstallerDefaults, ProxyLaunchResult,
+        ProxyLaunchStatus,
+    },
+    config::Config,
+    installer, mode, proxy,
 };
 use tauri::Emitter;
 
@@ -29,12 +33,36 @@ fn start_install(app: tauri::AppHandle, request: InstallRequest) -> Result<Insta
     Ok(InstallStart { accepted: true })
 }
 
+#[tauri::command]
+fn proxy_launch_status() -> Result<ProxyLaunchStatus, String> {
+    let (root, cfg) = proxy_context()?;
+    Ok(bridge::proxy_launch_status(&root, &cfg))
+}
+
+#[tauri::command]
+fn launch_codex() -> Result<ProxyLaunchResult, String> {
+    let (root, cfg) = proxy_context()?;
+    proxy::launch(&root, &cfg, &[]).map_err(|cause| format!("启动 Codex 失败：{cause:#}"))?;
+    Ok(ProxyLaunchResult {
+        launched: true,
+        message: "已启动 Codex".into(),
+    })
+}
+
+fn proxy_context() -> Result<(std::path::PathBuf, Config), String> {
+    let root = mode::install_root().map_err(|cause| format!("无法读取安装目录：{cause:#}"))?;
+    let cfg = Config::load_runtime(&root).map_err(|cause| format!("尚未完成安装：{cause:#}"))?;
+    Ok((root, cfg))
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             app_status,
             installer_defaults,
-            start_install
+            start_install,
+            proxy_launch_status,
+            launch_codex
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Codex Windows 中文助手");

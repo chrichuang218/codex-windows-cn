@@ -58,11 +58,24 @@ export type InstallEvent = {
   message: string | null;
 };
 
+export type ProxyLaunchStatus = {
+  canLaunch: boolean;
+  codexExe: string | null;
+  message: string;
+};
+
+export type ProxyLaunchResult = {
+  launched: boolean;
+  message: string;
+};
+
 export type AppBridge = {
   getAppStatus: () => Promise<AppStatus>;
   getInstallerDefaults: () => Promise<InstallerDefaults>;
   startInstall: (request: InstallRequest) => Promise<InstallStart>;
   onInstallEvent: (handler: (event: InstallEvent) => void) => () => void;
+  getProxyLaunchStatus: () => Promise<ProxyLaunchStatus>;
+  launchCodex: () => Promise<ProxyLaunchResult>;
 };
 
 const fallbackStatus: AppStatus = {
@@ -112,6 +125,12 @@ const fallbackInstallerDefaults: InstallerDefaults = {
   fetchers: ["direct", "winget", "localFile"]
 };
 
+const fallbackProxyLaunchStatus: ProxyLaunchStatus = {
+  canLaunch: false,
+  codexExe: null,
+  message: "尚未完成安装"
+};
+
 export const tauriBridge: AppBridge = {
   getAppStatus: () => {
     if (!("__TAURI_INTERNALS__" in window)) {
@@ -153,6 +172,20 @@ export const tauriBridge: AppBridge = {
       active = false;
       unlisten?.();
     };
+  },
+  getProxyLaunchStatus: () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve(fallbackProxyLaunchStatus);
+    }
+
+    return invoke<ProxyLaunchStatus>("proxy_launch_status");
+  },
+  launchCodex: () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve({ launched: true, message: "已启动 Codex" });
+    }
+
+    return invoke<ProxyLaunchResult>("launch_codex");
   }
 };
 
