@@ -1,212 +1,120 @@
-# codex-windows-updater
+# Codex Windows 中文助手
 
-NOTICE: recent Codex updates caused the Electron Codex app to mess with Start Menu shortcuts, and some other stuff that breaks auto updates. In addition to introdoucing some bugs. I will fix it when I have time.
+面向中文 Windows 用户的 **中文安装更新助手**。v1 只稳定交付 **五条主路径**：安装、代理启动、检查更新/更新、卸载、自更新。
 
-Unofficial Windows installer and updater for the **OpenAI Codex** desktop app.
-Downloads the official Microsoft Store MSIX directly (or via `winget`),
-extracts it, and re-launches the newest version on demand. No Store app
-required.
+本项目不是 OpenAI 官方项目，也不是 Codex 应用本体。Codex、OpenAI 及相关标识归其权利方所有。
 
-<img width="609" height="475" alt="screenshot" src="https://github.com/user-attachments/assets/f4b36a50-60ed-4136-8535-86302d9d6fd6" />
+## 项目边界
 
-## TL;DR
+- 不修改、不重新分发 Codex 本体。
+- 不打包第三方镜像源，不替换官方分发链路。
+- 不在 v1 增加诊断报告、一键修复、网络检测、代理配置或镜像分发。
+- 只提供一个中文 Windows 启动器，用来下载官方 Microsoft Store MSIX、安装到本机、启动已安装的 Codex、检查更新、卸载本工具管理的文件，并更新启动器自身。
 
-A single executable, `codex-launcher.exe`. It behaves as either:
+## 五条主路径
 
-- **Installer** — when no `updater.json` sits next to it. Runs the wizard
-  (mode → path → options → progress → done).
-- **Proxy** — when `updater.json` is present. Spawns the most recent
-  `Codex.exe` from `versions/<ver>/`, after an optional update check.
+| 主路径 | v1 行为 |
+| --- | --- |
+| 安装 | 选择安装模式、安装位置和基础选项，下载官方 Microsoft Store MSIX，解压到版本目录，写入启动器配置。 |
+| 代理启动 | 从已安装版本中解析最新 `Codex.exe`，保持稳定入口，并启动 Codex。 |
+| 检查更新/更新 | 检查官方 Microsoft Store MSIX 最新版本，支持立即更新、稍后提醒、跳过版本和关闭提醒。 |
+| 卸载 | 展示将删除和将保留的内容，只删除启动器管理的版本、缓存、配置、快捷方式和卸载入口。 |
+| 自更新 | 检查 `chrichuang218/codex-windows-cn` 的 GitHub Release，下载 `codex-launcher.exe`，校验 SHA256，自检后替换启动器。 |
 
-Install layout:
+## 下载与验证
 
-```
-<root>/
-├── codex-launcher.exe       # the same exe, copied here at install time
-├── updater.json             # configuration + state
-├── versions/
-│   ├── 26.422.2437.0/       # extracted MSIX contents
-│   ├── 26.500.0.0/
-│   └── current → 26.500.0.0 # optional directory junction
-└── downloads/               # MSIX cache (one file per update)
-```
+最新发布页：
 
-Not affiliated with OpenAI or Microsoft. The Codex app, its branding, and
-its packaging belong to OpenAI.
+- `codex-launcher.exe`: <https://github.com/chrichuang218/codex-windows-cn/releases/latest/download/codex-launcher.exe>
+- `codex-launcher.exe.sha256`: <https://github.com/chrichuang218/codex-windows-cn/releases/latest/download/codex-launcher.exe.sha256>
 
-## Download
-
-Latest release:
-[**codex-launcher.exe**](https://github.com/vaportail/codex-windows-updater/releases/latest/download/codex-launcher.exe)
-([SHA-256](https://github.com/vaportail/codex-windows-updater/releases/latest/download/codex-launcher.exe.sha256))
-
-Run the binary — it'll launch the installer wizard.
-
-> Windows SmartScreen will warn on first run because the binary isn't
-> signed (see [License](#license)). Click "More info" → "Run anyway."
-
-### Verifying the build
-
-Each release is built by GitHub Actions and signed via Sigstore
-build-provenance. To verify the binary you downloaded was produced by
-this exact repo at the tagged commit (requires
-[GitHub CLI](https://cli.github.com/)):
-
-```
-gh attestation verify codex-launcher.exe --owner vaportail
-```
-
-For a basic integrity check without `gh`, compare the SHA-256:
+基础完整性校验：
 
 ```powershell
-(Get-FileHash codex-launcher.exe -Algorithm SHA256).Hash
-# compare against the contents of codex-launcher.exe.sha256
+(Get-FileHash .\codex-launcher.exe -Algorithm SHA256).Hash
+# 与 codex-launcher.exe.sha256 中的 SHA256 值对比
 ```
 
-## Building from source
+构建来源验证：
 
-Requires Rust 1.80+ and the MSVC toolchain on Windows.
-
+```powershell
+gh attestation verify codex-launcher.exe --owner chrichuang218
 ```
+
+Release 产物由 GitHub Actions 构建，并发布 SHA256 文件。校验通过只能证明你拿到的是本仓库对应构建产物，不能表示它是 OpenAI 官方发布物。
+
+## 官方 MSIX 来源
+
+安装和 Codex 更新路径使用官方 Microsoft Store MSIX：
+
+- 默认直连 Microsoft Store 相关接口解析和下载。
+- 可用 `winget` 作为备用下载方式。
+- 可使用本地 MSIX 作为手动兜底，但文件仍应来自可信官方渠道。
+
+启动器只解压并管理本机安装目录，不修改 Codex 应用包内容。
+
+## 安装布局
+
+默认安装后目录大致如下：
+
+```text
+<root>/
+├── codex-launcher.exe
+├── updater.json
+├── versions/
+│   ├── 26.422.2437.0/
+│   ├── 26.500.0.0/
+│   └── current -> 26.500.0.0
+└── downloads/
+```
+
+`updater.json` 保存安装模式、当前版本、更新策略、保留版本数、自更新提醒状态等运行时配置。
+
+## 从源码构建
+
+需要 Windows、Rust/MSVC 工具链，以及前端依赖：
+
+```powershell
+npm --prefix frontend install
+npm --prefix frontend run build
 cargo build --release
 ```
 
-The output is `target/release/codex-launcher.exe`.
+输出文件位于：
 
-## Operation
-
-### Install modes
-
-| Mode | Default location | Admin? | Shortcut | Registry |
-|---|---|---|---|---|
-| Portable | `<cwd>/CodexPortable` | no | optional | no |
-| User | `%LOCALAPPDATA%/Codex` | no | optional | HKCU |
-| System | `C:\Program Files\Codex` | yes (UAC) | optional | HKLM |
-
-Choose during the wizard. The wizard re-spawns elevated automatically when
-System mode is selected.
-
-### Update fetchers
-
-Two strategies for resolving and downloading the latest MSIX:
-
-- **Direct** (default) — DisplayCatalog + FE3 SOAP, anonymous. No local
-  tools needed. Pure HTTPS to `displaycatalog.mp.microsoft.com` and
-  `fe3.delivery.mp.microsoft.com`.
-- **Winget** — shells out to `winget.exe download`. Useful as a manual
-  fallback if the direct path is blocked (corporate firewall, custom root
-  CA policy, etc.).
-
-If the configured fetcher fails, the launcher transparently retries with
-the other one for that run. Your stored preference is **not** auto-flipped
-on a single fallback success — a transient blip shouldn't permanently
-demote your choice.
-
-A third manual escape hatch exists: pre-download the MSIX yourself and
-pass `--msix <path>` along with `--fetcher local`.
-
-### Update checks
-
-`updater.json` carries an `update_policy`: `always` / `daily` / `weekly` /
-`never`. Proxy mode honors the policy on each launch:
-
-- Cooldown not elapsed → silent launch, no network.
-- Cooldown elapsed → resolve latest version (no download). On match,
-  silent launch. On mismatch, show the prompt (Update now / Not now /
-  Skip this version / Snooze 1 day / Snooze 7 days / Never).
-- "Skip this version" suppresses prompts only while the Store's latest
-  matches that version. As soon as Microsoft publishes a newer build,
-  prompts resume.
-
-Click "Check for updates" anywhere to bypass the cooldown.
-
-### Versions and pruning
-
-Each MSIX extracts into its own `versions/<ver>/` directory. The launcher
-keeps the N newest (default 2) and prunes the rest after a successful
-install.
-
-If the optional `versions/current` junction is enabled, it always points
-at the newest installed version — useful for tooling, AV exemptions, or
-shortcuts that want a stable path.
-
-### Uninstall
-
-Run `codex-launcher.exe --uninstall`. The flow:
-
-1. Validate the install root looks like ours (refuses to wipe a Desktop /
-   Downloads / user-profile / Program Files / drive-root).
-2. Detect any running `Codex.exe` processes and prompt before terminating
-   them.
-3. Whitelist-delete only the things we placed: `versions/`, `downloads/`,
-   `updater.json`, the Start Menu shortcut, the Add/Remove Programs
-   registry entry, the `versions/current` junction.
-4. POSIX-unlink the launcher itself (Win10 1809+); falls back to
-   `MoveFileEx(MOVEFILE_DELAY_UNTIL_REBOOT)` on older systems.
-5. Write a cleanup report to `%TEMP%/codex-uninstall-<ts>.log`.
-
-Files in the install root that we didn't put there are **not** touched.
-
-### Configuration
-
-`updater.json` example:
-
-```json
-{
-  "install_mode": "user",
-  "current_version": "26.500.0.0",
-  "update_policy": "daily",
-  "last_check_unix": 1735689600,
-  "suppress_until_unix": null,
-  "known_latest": "26.500.0.0",
-  "skipped_version": null,
-  "keep_versions": 2,
-  "fetcher": "direct",
-  "use_current_junction": true
-}
+```text
+target/release/codex-launcher.exe
 ```
 
-Edit by hand at your own risk; the launcher writes to it on every
-successful update.
+常用验证：
 
-### CLI flags
+```powershell
+cargo test --all-targets
+npm --prefix frontend test
+npm --prefix frontend run build
+cargo build
+```
 
-| Flag | Effect |
-|---|---|
-| `--uninstall` | Run the uninstaller UI |
-| `--fetcher direct\|winget\|local` | Override `fetcher` for this run only |
-| `--msix <path>` | Use a local MSIX (with `--fetcher local`) |
-| `--test-fetch` | Resolve latest version, no download |
-| `--test-download` | Download latest MSIX into `downloads/` |
-| `--test-extract --version X --root Y` | Extract a downloaded MSIX |
-| `--dump-sync` | Dump the raw FE3 SyncUpdates response (debug) |
+## 卸载说明
 
-## License
+卸载流程会先校验安装目录是否属于本工具管理，避免误删桌面、下载目录、用户目录、Program Files 根目录或磁盘根目录。
 
-This project's source code is licensed under the **MIT License** (see
-`LICENSE`). The MIT terms cover the code in this repository.
+卸载会删除：
 
-The shipped binary additionally includes third-party components with
-their own license terms:
+- 已安装的 Codex 版本目录
+- 下载缓存
+- 启动器配置
+- 开始菜单快捷方式
+- Windows 卸载入口
 
-- **[Slint](https://slint.dev/)** — the UI toolkit. Used here under the
-  **Slint Royalty-Free License 2.0**, which requires that the running
-  application display "Made with Slint" in a place visible to the user
-  during normal use. This attribution appears as a small footer on every
-  screen of the launcher. See https://github.com/slint-ui/slint for the
-  full license text.
-- Other dependencies (`reqwest`, `rustls`, `serde`, `windows`, `zip`,
-  `quick-xml`, `directories`, `anyhow`, `thiserror`, `winresource`, and
-  their transitive deps) are licensed under permissive terms (MIT,
-  Apache-2.0, ISC, or combinations thereof). Their license texts are
-  preserved in the published crates and follow you wherever the binary
-  goes.
+卸载会保留：
 
-If you redistribute the compiled launcher, comply with all of the above —
-chiefly: keep the "Made with Slint" attribution visible, and preserve
-upstream license notices.
+- Codex 登录数据
+- 日志和诊断信息
+- 安装目录中非本工具创建的其他文件
 
----
+## 许可证
 
-Most of this code was written with Anthropic's Claude. Yes, the irony of
-shipping a Codex launcher built by a competing AI is fully appreciated.
+本仓库代码使用 MIT License。第三方依赖遵循其各自许可证。
+
+再次强调：本项目是社区开源的 Codex Windows 中文助手，不是 OpenAI 官方项目；它不修改、不重新分发 Codex 本体。
