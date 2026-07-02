@@ -18,7 +18,7 @@ anyhow = "1"
 thiserror = "2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-native-roots", "json"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
-directories = "5"
+directories = "6"
 quick-xml = "0.36"
 sha2 = "0.10"
 
