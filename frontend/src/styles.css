@@ -1,0 +1,138 @@
+:root {
+  color: #ecf1f8;
+  background: #111318;
+  font-family:
+    "Microsoft YaHei UI",
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+  font-synthesis: none;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 760px;
+  min-height: 560px;
+  margin: 0;
+  background:
+    linear-gradient(135deg, rgba(39, 44, 52, 0.92), rgba(17, 19, 24, 0.98)),
+    #111318;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.shell {
+  min-height: 100vh;
+  padding: 44px 52px;
+}
+
+.shell-center {
+  display: grid;
+  place-items: center;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+  max-width: 760px;
+}
+
+.brand-mark {
+  display: grid;
+  width: 68px;
+  height: 68px;
+  place-items: center;
+  border: 1px solid rgba(150, 164, 184, 0.28);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(45, 55, 72, 0.86), rgba(21, 25, 32, 0.96));
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+  color: #7dd3fc;
+  font-size: 30px;
+  font-weight: 700;
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: #8fb3ff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+h1 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 34px;
+  font-weight: 750;
+}
+
+.summary {
+  max-width: 640px;
+  margin: 16px 0 0;
+  color: #aeb8c7;
+  font-size: 15px;
+}
+
+.main-paths {
+  display: grid;
+  max-width: 760px;
+  margin-top: 38px;
+  border: 1px solid rgba(150, 164, 184, 0.2);
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(20, 24, 31, 0.68);
+}
+
+.path-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 58px;
+  padding: 0 18px;
+  border-bottom: 1px solid rgba(150, 164, 184, 0.14);
+}
+
+.path-row:last-child {
+  border-bottom: 0;
+}
+
+.path-row span {
+  color: #eef4ff;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.path-row small {
+  color: #86efac;
+  font-size: 12px;
+}
+
+.notice {
+  width: min(520px, 100%);
+  border: 1px solid rgba(150, 164, 184, 0.22);
+  border-radius: 14px;
+  padding: 28px;
+  background: rgba(20, 24, 31, 0.74);
+}
+
+.notice h1 {
+  font-size: 25px;
+}
+
+.notice p:last-child {
+  margin-bottom: 0;
+  color: #aeb8c7;
+}
+
+.notice-error {
+  border-color: rgba(248, 113, 113, 0.38);
+}
