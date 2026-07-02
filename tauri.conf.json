@@ -4,8 +4,8 @@
   "version": "0.1.2",
   "identifier": "io.github.chrichuang218.codex-windows-cn",
   "build": {
-    "beforeDevCommand": "npm --prefix frontend run dev",
-    "beforeBuildCommand": "npm --prefix frontend run build",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
     "devUrl": "http://localhost:5173",
     "frontendDist": "./frontend/dist"
   },

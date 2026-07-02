@@ -22,8 +22,27 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Cache cargo registry + build
         uses: Swatinem/rust-cache@v2
+
+      - name: frontend dependencies
+        run: npm --prefix frontend ci
+
+      - name: frontend tests
+        run: npm --prefix frontend test
+
+      - name: frontend typecheck
+        run: npm --prefix frontend run typecheck
+
+      - name: frontend build
+        run: npm --prefix frontend run build
 
       - name: rustfmt
         run: cargo fmt --all -- --check
@@ -33,6 +52,12 @@ jobs:
 
       - name: tests
         run: cargo test --all-targets
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Tauri release build
+        run: cargo tauri build --no-bundle
 
       - name: release build
         run: cargo build --release
