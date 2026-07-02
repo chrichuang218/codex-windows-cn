@@ -257,6 +257,32 @@ h2 {
   opacity: 0.78;
 }
 
+.danger-button,
+.secondary-button {
+  min-height: 40px;
+  border-radius: 9px;
+  padding: 0 16px;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.danger-button {
+  border: 1px solid rgba(248, 113, 113, 0.48);
+  background: linear-gradient(180deg, #fb7185, #be123c);
+  color: #fff7f7;
+}
+
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.secondary-button {
+  border: 1px solid rgba(150, 164, 184, 0.2);
+  background: rgba(12, 16, 22, 0.54);
+  color: #dbe6f4;
+}
+
 .install-actions span {
   color: #aeb8c7;
   font-size: 13px;
@@ -317,4 +343,41 @@ h2 {
   color: #cbd5e1;
   font-family: "Cascadia Mono", "Consolas", monospace;
   font-size: 12px;
+}
+
+.launch-status span,
+.inline-status {
+  color: #aeb8c7;
+  font-size: 13px;
+}
+
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.uninstall-lists {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.uninstall-lists div {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(150, 164, 184, 0.16);
+  border-radius: 10px;
+  padding: 14px;
+  background: rgba(8, 11, 16, 0.42);
+}
+
+.uninstall-lists strong {
+  color: #eef4ff;
+  font-size: 13px;
+}
+
+.uninstall-lists span {
+  color: #aeb8c7;
+  font-size: 13px;
 }

@@ -105,6 +105,32 @@ export type UpdateEvent = {
   message: string | null;
 };
 
+export type UninstallConfirmation = {
+  title: string;
+  root: string;
+  deleteItems: string[];
+  preserveItems: string[];
+};
+
+export type UninstallStatus = {
+  kind: "ready" | "blocked";
+  title: string;
+  message: string;
+};
+
+export type UninstallStart = {
+  accepted: boolean;
+};
+
+export type UninstallEvent = {
+  kind: "phase" | "progress" | "done" | "error";
+  title: string;
+  detail: string;
+  progress: number | null;
+  logPath: string | null;
+  message: string | null;
+};
+
 export type AppBridge = {
   getAppStatus: () => Promise<AppStatus>;
   getInstallerDefaults: () => Promise<InstallerDefaults>;
@@ -119,6 +145,10 @@ export type AppBridge = {
     latestVersion: string
   ) => Promise<UpdateActionResult>;
   onUpdateEvent: (handler: (event: UpdateEvent) => void) => () => void;
+  getUninstallConfirmation: () => Promise<UninstallConfirmation>;
+  getUninstallStatus: () => Promise<UninstallStatus>;
+  startUninstall: () => Promise<UninstallStart>;
+  onUninstallEvent: (handler: (event: UninstallEvent) => void) => () => void;
 };
 
 const fallbackStatus: AppStatus = {
@@ -181,6 +211,19 @@ const fallbackUpdateStatus: UpdateStatus = {
   currentVersion: null,
   latestVersion: null,
   actions: []
+};
+
+const fallbackUninstallConfirmation: UninstallConfirmation = {
+  title: "确认卸载 Codex Windows 中文助手",
+  root: "尚未完成安装",
+  deleteItems: ["已安装的 Codex 版本", "下载缓存", "启动器配置"],
+  preserveItems: ["Codex 登录数据", "日志和诊断信息"]
+};
+
+const fallbackUninstallStatus: UninstallStatus = {
+  kind: "blocked",
+  title: "无法卸载",
+  message: "尚未完成安装"
 };
 
 export const tauriBridge: AppBridge = {
@@ -274,6 +317,49 @@ export const tauriBridge: AppBridge = {
         nextUnlisten();
       }
     });
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  },
+  getUninstallConfirmation: () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve(fallbackUninstallConfirmation);
+    }
+
+    return invoke<UninstallConfirmation>("uninstall_confirmation");
+  },
+  getUninstallStatus: () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve(fallbackUninstallStatus);
+    }
+
+    return invoke<UninstallStatus>("uninstall_status");
+  },
+  startUninstall: () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve({ accepted: true });
+    }
+
+    return invoke<UninstallStart>("start_uninstall");
+  },
+  onUninstallEvent: (handler) => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return () => {};
+    }
+
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    listen<UninstallEvent>("uninstall://event", (event) => handler(event.payload)).then(
+      (nextUnlisten) => {
+        if (active) {
+          unlisten = nextUnlisten;
+        } else {
+          nextUnlisten();
+        }
+      }
+    );
 
     return () => {
       active = false;

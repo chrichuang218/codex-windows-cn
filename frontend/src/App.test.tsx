@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, test } from "vitest";
 import { App } from "./App";
 import type { AppBridge, InstallerDefaults } from "./bridge";
@@ -59,6 +59,22 @@ const updateBridgeDefaults = {
   onUpdateEvent: () => () => {}
 };
 
+const uninstallBridgeDefaults = {
+  getUninstallConfirmation: async () => ({
+    title: "确认卸载 Codex Windows 中文助手",
+    root: "C:\\Users\\tester\\AppData\\Local\\Codex",
+    deleteItems: ["已安装的 Codex 版本", "下载缓存", "启动器配置"],
+    preserveItems: ["Codex 登录数据", "日志和诊断信息"]
+  }),
+  getUninstallStatus: async () => ({
+    kind: "ready" as const,
+    title: "可以卸载",
+    message: "将只删除启动器管理的文件"
+  }),
+  startUninstall: async () => ({ accepted: true }),
+  onUninstallEvent: () => () => {}
+};
+
 afterEach(() => {
   cleanup();
 });
@@ -86,18 +102,20 @@ describe("Codex Windows 中文助手 shell", () => {
         message: "可以启动 Codex"
       }),
       launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
-      ...updateBridgeDefaults
+      ...updateBridgeDefaults,
+      ...uninstallBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
 
     expect(await screen.findByRole("heading", { name: "Codex Windows 中文助手" })).toBeVisible();
     expect(screen.getByText("中文安装更新助手")).toBeVisible();
-    expect(screen.getByText("安装")).toBeVisible();
-    expect(screen.getByText("代理启动")).toBeVisible();
-    expect(screen.getByText("检查更新 / 更新")).toBeVisible();
-    expect(screen.getByText("卸载")).toBeVisible();
-    expect(screen.getByText("自更新")).toBeVisible();
+    const mainPaths = within(screen.getByLabelText("v1 五条主路径"));
+    expect(mainPaths.getByText("安装")).toBeVisible();
+    expect(mainPaths.getByText("代理启动")).toBeVisible();
+    expect(mainPaths.getByText("检查更新 / 更新")).toBeVisible();
+    expect(mainPaths.getByText("卸载")).toBeVisible();
+    expect(mainPaths.getByText("自更新")).toBeVisible();
   });
 
   test("renders the install wizard from installer defaults", async () => {
@@ -116,7 +134,8 @@ describe("Codex Windows 中文助手 shell", () => {
         message: "可以启动 Codex"
       }),
       launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
-      ...updateBridgeDefaults
+      ...updateBridgeDefaults,
+      ...uninstallBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -152,7 +171,8 @@ describe("Codex Windows 中文助手 shell", () => {
         message: "可以启动 Codex"
       }),
       launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
-      ...updateBridgeDefaults
+      ...updateBridgeDefaults,
+      ...uninstallBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -192,7 +212,8 @@ describe("Codex Windows 中文助手 shell", () => {
         message: "可以启动 Codex"
       }),
       launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
-      ...updateBridgeDefaults
+      ...updateBridgeDefaults,
+      ...uninstallBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -246,7 +267,8 @@ describe("Codex Windows 中文助手 shell", () => {
         launched = true;
         return { launched: true, message: "已启动 Codex" };
       },
-      ...updateBridgeDefaults
+      ...updateBridgeDefaults,
+      ...uninstallBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -304,7 +326,8 @@ describe("Codex Windows 中文助手 shell", () => {
       onUpdateEvent: (handler) => {
         emitUpdateEvent = handler;
         return () => {};
-      }
+      },
+      ...uninstallBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -330,5 +353,72 @@ describe("Codex Windows 中文助手 shell", () => {
 
     expect(await screen.findByText("更新完成")).toBeVisible();
     expect(screen.getByText("已更新到 Codex 1.2.0")).toBeVisible();
+  });
+
+  test("renders and starts the uninstall path", async () => {
+    let startedUninstall = false;
+    let emitUninstallEvent:
+      | ((event: {
+          kind: "phase" | "progress" | "done" | "error";
+          title: string;
+          detail: string;
+          progress: number | null;
+          logPath: string | null;
+          message: string | null;
+        }) => void)
+      | null = null;
+    const bridge: AppBridge = {
+      getAppStatus: async () => ({
+        productName: "Codex Windows 中文助手",
+        v1Boundary: "中文安装更新助手",
+        mainPaths: ["install", "proxyLaunch", "checkAndUpdate", "uninstall", "launcherSelfUpdate"]
+      }),
+      getInstallerDefaults: async () => installerDefaults,
+      startInstall: async () => ({ accepted: true }),
+      onInstallEvent: () => () => {},
+      getProxyLaunchStatus: async () => ({
+        canLaunch: true,
+        codexExe: "C:\\Users\\tester\\AppData\\Local\\Codex\\versions\\1.2.0\\Codex.exe",
+        message: "可以启动 Codex"
+      }),
+      launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
+      ...updateBridgeDefaults,
+      getUninstallConfirmation: uninstallBridgeDefaults.getUninstallConfirmation,
+      getUninstallStatus: uninstallBridgeDefaults.getUninstallStatus,
+      startUninstall: async () => {
+        startedUninstall = true;
+        return { accepted: true };
+      },
+      onUninstallEvent: (handler) => {
+        emitUninstallEvent = handler;
+        return () => {};
+      }
+    };
+
+    render(<App bridge={bridge} />);
+
+    expect(await screen.findByRole("heading", { name: "卸载" })).toBeVisible();
+    expect(screen.getByText("将只删除启动器管理的文件")).toBeVisible();
+    expect(screen.getByText("已安装的 Codex 版本")).toBeVisible();
+    expect(screen.getByText("Codex 登录数据")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "确认卸载" }));
+
+    expect(await screen.findByText("正在卸载")).toBeVisible();
+    expect(startedUninstall).toBe(true);
+
+    act(() => {
+      emitUninstallEvent?.({
+        kind: "done",
+        title: "卸载完成",
+        detail: "卸载日志：C:\\Temp\\codex-uninstall.log",
+        progress: 1,
+        logPath: "C:\\Temp\\codex-uninstall.log",
+        message: null
+      });
+    });
+
+    expect(await screen.findByText("卸载完成")).toBeVisible();
+    expect(screen.getByText("卸载日志：C:\\Temp\\codex-uninstall.log")).toBeVisible();
   });
 });

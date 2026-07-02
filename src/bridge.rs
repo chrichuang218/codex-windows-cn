@@ -1,7 +1,9 @@
 use crate::config::{Config, InstallMode};
 use crate::installer::{self, InstallMsg, InstallOptions};
 use crate::proxy;
+use crate::safety;
 use crate::store::Fetcher;
+use crate::uninstall::UninstallMsg;
 use crate::updater::{self, UpdateDecision};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -139,6 +141,56 @@ pub struct UpdateActionResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UninstallConfirmation {
+    pub title: String,
+    pub root: String,
+    pub delete_items: Vec<String>,
+    pub preserve_items: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UninstallStatus {
+    pub kind: UninstallStatusKind,
+    pub title: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UninstallStatusKind {
+    Ready,
+    Blocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UninstallStart {
+    pub accepted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UninstallEvent {
+    pub kind: UninstallEventKind,
+    pub title: String,
+    pub detail: String,
+    pub progress: Option<f32>,
+    pub log_path: Option<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UninstallEventKind {
+    Phase,
+    Progress,
+    Done,
+    Error,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum UpdateStatusKind {
@@ -237,6 +289,81 @@ pub fn update_status_from_decision(decision: UpdateDecision) -> UpdateStatus {
             current_version: None,
             latest_version: None,
             actions: Vec::new(),
+        },
+    }
+}
+
+pub fn uninstall_confirmation(root: &Path) -> UninstallConfirmation {
+    UninstallConfirmation {
+        title: "确认卸载 Codex Windows 中文助手".into(),
+        root: root.to_string_lossy().into_owned(),
+        delete_items: vec![
+            "已安装的 Codex 版本".into(),
+            "下载缓存".into(),
+            "启动器配置".into(),
+            "开始菜单快捷方式".into(),
+            "Windows 卸载入口".into(),
+        ],
+        preserve_items: vec!["Codex 登录数据".into(), "日志和诊断信息".into()],
+    }
+}
+
+pub fn uninstall_status_for_root(root: &Path) -> UninstallStatus {
+    match safety::validate_uninstall_root(root) {
+        Ok(()) => UninstallStatus {
+            kind: UninstallStatusKind::Ready,
+            title: "可以卸载".into(),
+            message: "将只删除启动器管理的文件".into(),
+        },
+        Err(cause) => UninstallStatus {
+            kind: UninstallStatusKind::Blocked,
+            title: "无法卸载".into(),
+            message: format!("拒绝卸载：{cause}"),
+        },
+    }
+}
+
+pub fn uninstall_event_from_msg(msg: UninstallMsg) -> UninstallEvent {
+    match msg {
+        UninstallMsg::Phase { phase, detail } => UninstallEvent {
+            kind: UninstallEventKind::Phase,
+            title: uninstall_phase_title(&phase).into(),
+            detail,
+            progress: None,
+            log_path: None,
+            message: None,
+        },
+        UninstallMsg::Progress(progress) => UninstallEvent {
+            kind: UninstallEventKind::Progress,
+            title: "卸载进度".into(),
+            detail: String::new(),
+            progress,
+            log_path: None,
+            message: None,
+        },
+        UninstallMsg::Done { log_path } => UninstallEvent {
+            kind: UninstallEventKind::Done,
+            title: "卸载完成".into(),
+            detail: if log_path.is_empty() {
+                "卸载已完成".into()
+            } else {
+                format!("卸载日志：{log_path}")
+            },
+            progress: Some(1.0),
+            log_path: if log_path.is_empty() {
+                None
+            } else {
+                Some(log_path)
+            },
+            message: None,
+        },
+        UninstallMsg::Error(message) => UninstallEvent {
+            kind: UninstallEventKind::Error,
+            title: "卸载失败".into(),
+            detail: String::new(),
+            progress: None,
+            log_path: None,
+            message: Some(message),
         },
     }
 }
@@ -457,6 +584,22 @@ fn update_phase_title(phase: &str) -> &'static str {
         "Extracting" => "正在解压更新",
         "Finalizing" => "正在完成更新",
         _ => "正在更新",
+    }
+}
+
+fn uninstall_phase_title(phase: &str) -> &'static str {
+    match phase {
+        "Validating install" => "正在校验安装目录",
+        "Terminating Codex" => "正在结束 Codex 进程",
+        "Removing Start Menu shortcut" => "正在移除开始菜单快捷方式",
+        "Removing registry entries" => "正在移除 Windows 卸载入口",
+        "Removing versions/current junction" => "正在移除 current 入口",
+        "Deleting files" => "正在删除文件",
+        "Deleting versioned installs" => "正在删除已安装版本",
+        "Deleting download cache" => "正在删除下载缓存",
+        "Removing config" => "正在移除启动器配置",
+        "Finalizing" => "正在完成卸载",
+        _ => "正在卸载",
     }
 }
 

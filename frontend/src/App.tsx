@@ -6,6 +6,9 @@ import type {
   InstallerDefaults,
   InstallMode,
   ProxyLaunchStatus,
+  UninstallConfirmation,
+  UninstallEvent,
+  UninstallStatus,
   UpdateAction,
   UpdateEvent,
   UpdateStatus
@@ -22,6 +25,9 @@ export function App({ bridge = tauriBridge }: AppProps) {
   const [installerDefaults, setInstallerDefaults] = useState<InstallerDefaults | null>(null);
   const [proxyStatus, setProxyStatus] = useState<ProxyLaunchStatus | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [uninstallConfirmation, setUninstallConfirmation] =
+    useState<UninstallConfirmation | null>(null);
+  const [uninstallStatus, setUninstallStatus] = useState<UninstallStatus | null>(null);
   const [selectedMode, setSelectedMode] = useState<InstallMode | null>(null);
   const [installState, setInstallState] = useState<"idle" | "starting" | "running">("idle");
   const [installEvent, setInstallEvent] = useState<InstallEvent | null>(null);
@@ -30,6 +36,9 @@ export function App({ bridge = tauriBridge }: AppProps) {
   const [updateState, setUpdateState] = useState<"idle" | "running">("idle");
   const [updateEvent, setUpdateEvent] = useState<UpdateEvent | null>(null);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
+  const [uninstallState, setUninstallState] = useState<"idle" | "running">("idle");
+  const [uninstallEvent, setUninstallEvent] = useState<UninstallEvent | null>(null);
+  const [uninstallMessage, setUninstallMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,17 +48,30 @@ export function App({ bridge = tauriBridge }: AppProps) {
       bridge.getAppStatus(),
       bridge.getInstallerDefaults(),
       bridge.getProxyLaunchStatus(),
-      bridge.checkUpdateStatus()
+      bridge.checkUpdateStatus(),
+      bridge.getUninstallConfirmation(),
+      bridge.getUninstallStatus()
     ])
-      .then(([nextStatus, nextInstallerDefaults, nextProxyStatus, nextUpdateStatus]) => {
-        if (alive) {
-          setStatus(nextStatus);
-          setInstallerDefaults(nextInstallerDefaults);
-          setProxyStatus(nextProxyStatus);
-          setUpdateStatus(nextUpdateStatus);
-          setSelectedMode(nextInstallerDefaults.recommendedMode);
+      .then(
+        ([
+          nextStatus,
+          nextInstallerDefaults,
+          nextProxyStatus,
+          nextUpdateStatus,
+          nextUninstallConfirmation,
+          nextUninstallStatus
+        ]) => {
+          if (alive) {
+            setStatus(nextStatus);
+            setInstallerDefaults(nextInstallerDefaults);
+            setProxyStatus(nextProxyStatus);
+            setUpdateStatus(nextUpdateStatus);
+            setUninstallConfirmation(nextUninstallConfirmation);
+            setUninstallStatus(nextUninstallStatus);
+            setSelectedMode(nextInstallerDefaults.recommendedMode);
+          }
         }
-      })
+      )
       .catch((cause: unknown) => {
         if (alive) {
           setError(cause instanceof Error ? cause.message : "无法读取应用状态");
@@ -63,6 +85,7 @@ export function App({ bridge = tauriBridge }: AppProps) {
 
   useEffect(() => bridge.onInstallEvent(setInstallEvent), [bridge]);
   useEffect(() => bridge.onUpdateEvent(setUpdateEvent), [bridge]);
+  useEffect(() => bridge.onUninstallEvent(setUninstallEvent), [bridge]);
 
   if (error) {
     return (
@@ -76,7 +99,15 @@ export function App({ bridge = tauriBridge }: AppProps) {
     );
   }
 
-  if (!status || !installerDefaults || !proxyStatus || !updateStatus || !selectedMode) {
+  if (
+    !status ||
+    !installerDefaults ||
+    !proxyStatus ||
+    !updateStatus ||
+    !uninstallConfirmation ||
+    !uninstallStatus ||
+    !selectedMode
+  ) {
     return (
       <main className="shell shell-center">
         <section className="notice">
@@ -152,6 +183,23 @@ export function App({ bridge = tauriBridge }: AppProps) {
     updateEvent?.progress === null || updateEvent?.progress === undefined
       ? null
       : Math.round(updateEvent.progress * 100);
+
+  const startUninstall = async () => {
+    setUninstallState("running");
+    setUninstallEvent(null);
+    setUninstallMessage(null);
+    try {
+      await bridge.startUninstall();
+    } catch (cause) {
+      setUninstallState("idle");
+      setUninstallMessage(cause instanceof Error ? cause.message : "启动卸载失败");
+    }
+  };
+
+  const uninstallProgress =
+    uninstallEvent?.progress === null || uninstallEvent?.progress === undefined
+      ? null
+      : Math.round(uninstallEvent.progress * 100);
 
   return (
     <main className="shell">
@@ -321,6 +369,65 @@ export function App({ bridge = tauriBridge }: AppProps) {
                 role="progressbar"
               >
                 <div style={{ width: `${updateProgress}%` }} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="install-panel launch-panel" aria-label="卸载">
+        <div className="section-heading">
+          <p className="eyebrow">主路径 4</p>
+          <h2>卸载</h2>
+        </div>
+
+        <div className="launch-status">
+          <strong>{uninstallConfirmation.title}</strong>
+          <code>{uninstallConfirmation.root}</code>
+          <span>{uninstallStatus.message}</span>
+        </div>
+
+        <div className="uninstall-lists">
+          <div>
+            <strong>将删除</strong>
+            {uninstallConfirmation.deleteItems.map((item) => (
+              <span key={item}>{item}</span>
+            ))}
+          </div>
+          <div>
+            <strong>将保留</strong>
+            {uninstallConfirmation.preserveItems.map((item) => (
+              <span key={item}>{item}</span>
+            ))}
+          </div>
+        </div>
+
+        <div className="install-actions">
+          <button
+            className="danger-button"
+            disabled={uninstallStatus.kind !== "ready" || uninstallState !== "idle"}
+            onClick={startUninstall}
+            type="button"
+          >
+            确认卸载
+          </button>
+          {uninstallState !== "idle" ? <span>正在卸载</span> : null}
+          {uninstallMessage ? <span>{uninstallMessage}</span> : null}
+        </div>
+
+        {uninstallState !== "idle" && uninstallEvent ? (
+          <div className="install-progress">
+            <strong>{uninstallEvent.title}</strong>
+            {uninstallEvent.detail ? <span>{uninstallEvent.detail}</span> : null}
+            {uninstallProgress !== null ? (
+              <div
+                aria-valuemax={100}
+                aria-valuemin={0}
+                aria-valuenow={uninstallProgress}
+                className="progress-track"
+                role="progressbar"
+              >
+                <div style={{ width: `${uninstallProgress}%` }} />
               </div>
             ) : null}
           </div>
