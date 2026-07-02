@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 export type MainPath =
   | "install"
@@ -13,8 +14,55 @@ export type AppStatus = {
   mainPaths: MainPath[];
 };
 
+export type InstallMode = "portable" | "user" | "system";
+export type Fetcher = "direct" | "winget" | "localFile";
+
+export type InstallModeDefaults = {
+  mode: InstallMode;
+  label: string;
+  defaultRoot: string;
+  createShortcut: boolean;
+  registerUninstall: boolean;
+  keepVersions: number;
+  useCurrentJunction: boolean;
+};
+
+export type InstallerDefaults = {
+  recommendedMode: InstallMode;
+  recommendedFetcher: Fetcher;
+  modes: InstallModeDefaults[];
+  fetchers: Fetcher[];
+};
+
+export type InstallRequest = {
+  mode: InstallMode;
+  root: string;
+  createShortcut: boolean;
+  registerUninstall: boolean;
+  keepVersions: number;
+  fetcher: Fetcher;
+  useCurrentJunction: boolean;
+  localMsix: string | null;
+};
+
+export type InstallStart = {
+  accepted: boolean;
+};
+
+export type InstallEvent = {
+  kind: "phase" | "progress" | "done" | "error";
+  title: string;
+  detail: string;
+  progress: number | null;
+  version: string | null;
+  message: string | null;
+};
+
 export type AppBridge = {
   getAppStatus: () => Promise<AppStatus>;
+  getInstallerDefaults: () => Promise<InstallerDefaults>;
+  startInstall: (request: InstallRequest) => Promise<InstallStart>;
+  onInstallEvent: (handler: (event: InstallEvent) => void) => () => void;
 };
 
 const fallbackStatus: AppStatus = {
@@ -29,6 +77,41 @@ const fallbackStatus: AppStatus = {
   ]
 };
 
+const fallbackInstallerDefaults: InstallerDefaults = {
+  recommendedMode: "user",
+  recommendedFetcher: "direct",
+  modes: [
+    {
+      mode: "portable",
+      label: "便携模式",
+      defaultRoot: ".\\CodexPortable",
+      createShortcut: false,
+      registerUninstall: false,
+      keepVersions: 2,
+      useCurrentJunction: true
+    },
+    {
+      mode: "user",
+      label: "当前用户",
+      defaultRoot: "C:\\Users\\Public\\Codex",
+      createShortcut: true,
+      registerUninstall: true,
+      keepVersions: 2,
+      useCurrentJunction: true
+    },
+    {
+      mode: "system",
+      label: "所有用户",
+      defaultRoot: "C:\\Program Files\\Codex",
+      createShortcut: true,
+      registerUninstall: true,
+      keepVersions: 2,
+      useCurrentJunction: true
+    }
+  ],
+  fetchers: ["direct", "winget", "localFile"]
+};
+
 export const tauriBridge: AppBridge = {
   getAppStatus: () => {
     if (!("__TAURI_INTERNALS__" in window)) {
@@ -36,6 +119,40 @@ export const tauriBridge: AppBridge = {
     }
 
     return invoke<AppStatus>("app_status");
+  },
+  getInstallerDefaults: () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve(fallbackInstallerDefaults);
+    }
+
+    return invoke<InstallerDefaults>("installer_defaults");
+  },
+  startInstall: (request) => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve({ accepted: true });
+    }
+
+    return invoke<InstallStart>("start_install", { request });
+  },
+  onInstallEvent: (handler) => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return () => {};
+    }
+
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    listen<InstallEvent>("install://event", (event) => handler(event.payload)).then((nextUnlisten) => {
+      if (active) {
+        unlisten = nextUnlisten;
+      } else {
+        nextUnlisten();
+      }
+    });
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
   }
 };
 

@@ -75,6 +75,13 @@ h1 {
   font-weight: 750;
 }
 
+h2 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 24px;
+  font-weight: 740;
+}
+
 .summary {
   max-width: 640px;
   margin: 16px 0 0;
@@ -135,4 +142,153 @@ h1 {
 
 .notice-error {
   border-color: rgba(248, 113, 113, 0.38);
+}
+
+.install-panel {
+  display: grid;
+  gap: 20px;
+  max-width: 760px;
+  margin-top: 28px;
+  border: 1px solid rgba(150, 164, 184, 0.22);
+  border-radius: 14px;
+  padding: 22px;
+  background:
+    linear-gradient(180deg, rgba(30, 36, 46, 0.86), rgba(19, 23, 30, 0.9)),
+    #151922;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
+}
+
+.section-heading {
+  display: grid;
+  gap: 2px;
+}
+
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mode-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  border: 1px solid rgba(150, 164, 184, 0.18);
+  border-radius: 10px;
+  padding: 0 14px;
+  background: rgba(12, 16, 22, 0.52);
+  color: #eaf1fb;
+  cursor: pointer;
+}
+
+.mode-button[aria-pressed="true"] {
+  border-color: rgba(125, 211, 252, 0.62);
+  background: rgba(14, 38, 51, 0.76);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.12);
+}
+
+.mode-button span {
+  font-weight: 700;
+}
+
+.mode-button small {
+  color: #86efac;
+  font-size: 12px;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+}
+
+.field span {
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.field input {
+  width: 100%;
+  height: 44px;
+  border: 1px solid rgba(150, 164, 184, 0.22);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: rgba(8, 11, 16, 0.62);
+  color: #f8fafc;
+}
+
+.option-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.option-list span {
+  min-height: 32px;
+  border: 1px solid rgba(150, 164, 184, 0.16);
+  border-radius: 999px;
+  padding: 6px 11px;
+  background: rgba(148, 163, 184, 0.08);
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.install-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.primary-button {
+  min-width: 118px;
+  min-height: 42px;
+  border: 1px solid rgba(125, 211, 252, 0.5);
+  border-radius: 9px;
+  padding: 0 18px;
+  background: linear-gradient(180deg, #38bdf8, #0284c7);
+  color: #06111a;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.primary-button:disabled {
+  cursor: wait;
+  opacity: 0.78;
+}
+
+.install-actions span {
+  color: #aeb8c7;
+  font-size: 13px;
+}
+
+.install-progress {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid rgba(150, 164, 184, 0.14);
+  padding-top: 2px;
+}
+
+.install-progress strong {
+  color: #f8fafc;
+  font-size: 14px;
+}
+
+.install-progress span {
+  color: #aeb8c7;
+  font-size: 13px;
+}
+
+.progress-track {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(8, 11, 16, 0.68);
+}
+
+.progress-track div {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #38bdf8, #86efac);
 }

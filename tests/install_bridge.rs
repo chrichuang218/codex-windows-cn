@@ -1,0 +1,100 @@
+use codex_windows_cn::bridge::{
+    install_event_from_msg, install_options_from_request, installer_defaults, BridgeFetcher,
+    BridgeInstallMode, InstallEvent, InstallEventKind, InstallRequest,
+};
+use codex_windows_cn::installer::InstallMsg;
+use codex_windows_cn::{config::InstallMode, store::Fetcher};
+use std::path::PathBuf;
+
+#[test]
+fn installer_defaults_offer_a_recommended_user_install_path() {
+    let defaults = installer_defaults();
+
+    assert_eq!(defaults.recommended_mode, BridgeInstallMode::User);
+    assert_eq!(defaults.recommended_fetcher, BridgeFetcher::Direct);
+    assert_eq!(
+        defaults.modes.iter().map(|mode| mode.mode).collect::<Vec<_>>(),
+        vec![
+            BridgeInstallMode::Portable,
+            BridgeInstallMode::User,
+            BridgeInstallMode::System,
+        ]
+    );
+    assert_eq!(
+        defaults.fetchers,
+        vec![
+            BridgeFetcher::Direct,
+            BridgeFetcher::Winget,
+            BridgeFetcher::LocalFile,
+        ]
+    );
+
+    let user_mode = defaults
+        .modes
+        .iter()
+        .find(|mode| mode.mode == BridgeInstallMode::User)
+        .expect("user install mode should be available");
+    assert_eq!(user_mode.label, "当前用户");
+    assert!(user_mode.default_root.ends_with(r"\Codex"));
+    assert!(user_mode.create_shortcut);
+    assert!(user_mode.register_uninstall);
+    assert_eq!(user_mode.keep_versions, 2);
+    assert!(user_mode.use_current_junction);
+
+    let portable_mode = defaults
+        .modes
+        .iter()
+        .find(|mode| mode.mode == BridgeInstallMode::Portable)
+        .expect("portable install mode should be available");
+    assert_eq!(portable_mode.label, "便携模式");
+    assert!(!portable_mode.create_shortcut);
+    assert!(!portable_mode.register_uninstall);
+}
+
+#[test]
+fn install_request_builds_installer_options_without_touching_disk() {
+    let request = InstallRequest {
+        mode: BridgeInstallMode::User,
+        root: r"C:\Users\tester\AppData\Local\Codex".into(),
+        create_shortcut: true,
+        register_uninstall: true,
+        keep_versions: 2,
+        fetcher: BridgeFetcher::Direct,
+        use_current_junction: true,
+        local_msix: None,
+    };
+
+    let options = install_options_from_request(request).expect("valid install request");
+
+    assert_eq!(options.mode, InstallMode::User);
+    assert_eq!(
+        options.root,
+        PathBuf::from(r"C:\Users\tester\AppData\Local\Codex")
+    );
+    assert!(options.create_shortcut);
+    assert!(options.register_uninstall);
+    assert_eq!(options.keep_versions, 2);
+    assert_eq!(options.fetcher, Fetcher::Direct);
+    assert!(options.use_current_junction);
+    assert!(options.local_msix.is_none());
+}
+
+#[test]
+fn install_worker_messages_are_reported_as_chinese_events() {
+    let event = install_event_from_msg(InstallMsg::Phase {
+        phase: "Downloading".into(),
+        detail: "via Direct".into(),
+    });
+
+    assert_eq!(
+        event,
+        InstallEvent {
+            kind: InstallEventKind::Phase,
+            title: "正在下载".into(),
+            detail: "通过直连 Microsoft Store".into(),
+            progress: None,
+            version: None,
+            message: None,
+        }
+    );
+}
