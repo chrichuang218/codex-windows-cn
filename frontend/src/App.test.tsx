@@ -38,6 +38,27 @@ const installerDefaults: InstallerDefaults = {
   fetchers: ["direct", "winget", "localFile"]
 };
 
+const updateBridgeDefaults = {
+  checkUpdateStatus: async () => ({
+    kind: "available" as const,
+    title: "发现 Codex 新版本",
+    message: "当前版本 1.0.0，可更新到 1.2.0",
+    currentVersion: "1.0.0",
+    latestVersion: "1.2.0",
+    actions: [
+      "updateNow" as const,
+      "notNow" as const,
+      "skipThisVersion" as const,
+      "snoozeOneDay" as const,
+      "snoozeSevenDays" as const,
+      "never" as const
+    ]
+  }),
+  startUpdate: async () => ({ accepted: true }),
+  applyUpdateAction: async () => ({ applied: true, message: "已保存更新提醒设置" }),
+  onUpdateEvent: () => () => {}
+};
+
 afterEach(() => {
   cleanup();
 });
@@ -64,7 +85,8 @@ describe("Codex Windows 中文助手 shell", () => {
         codexExe: "C:\\Users\\tester\\AppData\\Local\\Codex\\versions\\1.2.0\\Codex.exe",
         message: "可以启动 Codex"
       }),
-      launchCodex: async () => ({ launched: true, message: "已启动 Codex" })
+      launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
+      ...updateBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -93,7 +115,8 @@ describe("Codex Windows 中文助手 shell", () => {
         codexExe: "C:\\Users\\tester\\AppData\\Local\\Codex\\versions\\1.2.0\\Codex.exe",
         message: "可以启动 Codex"
       }),
-      launchCodex: async () => ({ launched: true, message: "已启动 Codex" })
+      launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
+      ...updateBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -128,7 +151,8 @@ describe("Codex Windows 中文助手 shell", () => {
         codexExe: "C:\\Users\\tester\\AppData\\Local\\Codex\\versions\\1.2.0\\Codex.exe",
         message: "可以启动 Codex"
       }),
-      launchCodex: async () => ({ launched: true, message: "已启动 Codex" })
+      launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
+      ...updateBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -167,7 +191,8 @@ describe("Codex Windows 中文助手 shell", () => {
         codexExe: "C:\\Users\\tester\\AppData\\Local\\Codex\\versions\\1.2.0\\Codex.exe",
         message: "可以启动 Codex"
       }),
-      launchCodex: async () => ({ launched: true, message: "已启动 Codex" })
+      launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
+      ...updateBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -220,7 +245,8 @@ describe("Codex Windows 中文助手 shell", () => {
       launchCodex: async () => {
         launched = true;
         return { launched: true, message: "已启动 Codex" };
-      }
+      },
+      ...updateBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -233,5 +259,76 @@ describe("Codex Windows 中文助手 shell", () => {
 
     expect(await screen.findByText("已启动 Codex")).toBeVisible();
     expect(launched).toBe(true);
+  });
+
+  test("renders and starts the update path", async () => {
+    let startedUpdate = false;
+    let emitUpdateEvent:
+      | ((event: {
+          kind: "phase" | "progress" | "done" | "error";
+          title: string;
+          detail: string;
+          progress: number | null;
+          version: string | null;
+          message: string | null;
+        }) => void)
+      | null = null;
+    const bridge: AppBridge = {
+      getAppStatus: async () => ({
+        productName: "Codex Windows 中文助手",
+        v1Boundary: "中文安装更新助手",
+        mainPaths: ["install", "proxyLaunch", "checkAndUpdate", "uninstall", "launcherSelfUpdate"]
+      }),
+      getInstallerDefaults: async () => installerDefaults,
+      startInstall: async () => ({ accepted: true }),
+      onInstallEvent: () => () => {},
+      getProxyLaunchStatus: async () => ({
+        canLaunch: true,
+        codexExe: "C:\\Users\\tester\\AppData\\Local\\Codex\\versions\\1.2.0\\Codex.exe",
+        message: "可以启动 Codex"
+      }),
+      launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
+      checkUpdateStatus: async () => ({
+        kind: "available",
+        title: "发现 Codex 新版本",
+        message: "当前版本 1.0.0，可更新到 1.2.0",
+        currentVersion: "1.0.0",
+        latestVersion: "1.2.0",
+        actions: ["updateNow", "notNow", "skipThisVersion", "snoozeOneDay", "snoozeSevenDays", "never"]
+      }),
+      startUpdate: async () => {
+        startedUpdate = true;
+        return { accepted: true };
+      },
+      applyUpdateAction: async () => ({ applied: true, message: "已保存更新提醒设置" }),
+      onUpdateEvent: (handler) => {
+        emitUpdateEvent = handler;
+        return () => {};
+      }
+    };
+
+    render(<App bridge={bridge} />);
+
+    expect(await screen.findByRole("heading", { name: "检查更新" })).toBeVisible();
+    expect(screen.getByText("当前版本 1.0.0，可更新到 1.2.0")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "立即更新" }));
+
+    expect(await screen.findByText("正在更新")).toBeVisible();
+    expect(startedUpdate).toBe(true);
+
+    act(() => {
+      emitUpdateEvent?.({
+        kind: "done",
+        title: "更新完成",
+        detail: "已更新到 Codex 1.2.0",
+        progress: 1,
+        version: "1.2.0",
+        message: null
+      });
+    });
+
+    expect(await screen.findByText("更新完成")).toBeVisible();
+    expect(screen.getByText("已更新到 Codex 1.2.0")).toBeVisible();
   });
 });

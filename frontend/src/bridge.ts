@@ -69,6 +69,42 @@ export type ProxyLaunchResult = {
   message: string;
 };
 
+export type UpdateStatusKind = "upToDate" | "available" | "skipped" | "error";
+export type UpdateAction =
+  | "updateNow"
+  | "notNow"
+  | "skipThisVersion"
+  | "snoozeOneDay"
+  | "snoozeSevenDays"
+  | "never";
+
+export type UpdateStatus = {
+  kind: UpdateStatusKind;
+  title: string;
+  message: string;
+  currentVersion: string | null;
+  latestVersion: string | null;
+  actions: UpdateAction[];
+};
+
+export type UpdateStart = {
+  accepted: boolean;
+};
+
+export type UpdateActionResult = {
+  applied: boolean;
+  message: string;
+};
+
+export type UpdateEvent = {
+  kind: "phase" | "progress" | "done" | "error";
+  title: string;
+  detail: string;
+  progress: number | null;
+  version: string | null;
+  message: string | null;
+};
+
 export type AppBridge = {
   getAppStatus: () => Promise<AppStatus>;
   getInstallerDefaults: () => Promise<InstallerDefaults>;
@@ -76,6 +112,13 @@ export type AppBridge = {
   onInstallEvent: (handler: (event: InstallEvent) => void) => () => void;
   getProxyLaunchStatus: () => Promise<ProxyLaunchStatus>;
   launchCodex: () => Promise<ProxyLaunchResult>;
+  checkUpdateStatus: () => Promise<UpdateStatus>;
+  startUpdate: () => Promise<UpdateStart>;
+  applyUpdateAction: (
+    action: UpdateAction,
+    latestVersion: string
+  ) => Promise<UpdateActionResult>;
+  onUpdateEvent: (handler: (event: UpdateEvent) => void) => () => void;
 };
 
 const fallbackStatus: AppStatus = {
@@ -129,6 +172,15 @@ const fallbackProxyLaunchStatus: ProxyLaunchStatus = {
   canLaunch: false,
   codexExe: null,
   message: "尚未完成安装"
+};
+
+const fallbackUpdateStatus: UpdateStatus = {
+  kind: "skipped",
+  title: "暂不检查更新",
+  message: "尚未完成安装",
+  currentVersion: null,
+  latestVersion: null,
+  actions: []
 };
 
 export const tauriBridge: AppBridge = {
@@ -186,6 +238,47 @@ export const tauriBridge: AppBridge = {
     }
 
     return invoke<ProxyLaunchResult>("launch_codex");
+  },
+  checkUpdateStatus: () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve(fallbackUpdateStatus);
+    }
+
+    return invoke<UpdateStatus>("check_update_status");
+  },
+  startUpdate: () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve({ accepted: true });
+    }
+
+    return invoke<UpdateStart>("start_update");
+  },
+  applyUpdateAction: (action, latestVersion) => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve({ applied: true, message: "已保存更新提醒设置" });
+    }
+
+    return invoke<UpdateActionResult>("apply_update_action", { action, latestVersion });
+  },
+  onUpdateEvent: (handler) => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return () => {};
+    }
+
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    listen<UpdateEvent>("update://event", (event) => handler(event.payload)).then((nextUnlisten) => {
+      if (active) {
+        unlisten = nextUnlisten;
+      } else {
+        nextUnlisten();
+      }
+    });
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
   }
 };
 

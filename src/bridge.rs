@@ -2,6 +2,7 @@ use crate::config::{Config, InstallMode};
 use crate::installer::{self, InstallMsg, InstallOptions};
 use crate::proxy;
 use crate::store::Fetcher;
+use crate::updater::{self, UpdateDecision};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -114,6 +115,70 @@ pub struct ProxyLaunchResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateStatus {
+    pub kind: UpdateStatusKind,
+    pub title: String,
+    pub message: String,
+    pub current_version: Option<String>,
+    pub latest_version: Option<String>,
+    pub actions: Vec<UpdateAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateStart {
+    pub accepted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateActionResult {
+    pub applied: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateStatusKind {
+    UpToDate,
+    Available,
+    Skipped,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateAction {
+    UpdateNow,
+    NotNow,
+    SkipThisVersion,
+    SnoozeOneDay,
+    SnoozeSevenDays,
+    Never,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateEvent {
+    pub kind: UpdateEventKind,
+    pub title: String,
+    pub detail: String,
+    pub progress: Option<f32>,
+    pub version: Option<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateEventKind {
+    Phase,
+    Progress,
+    Done,
+    Error,
+}
+
 pub fn app_status() -> AppStatus {
     AppStatus {
         product_name: "Codex Windows 中文助手",
@@ -125,6 +190,95 @@ pub fn app_status() -> AppStatus {
             MainPath::Uninstall,
             MainPath::LauncherSelfUpdate,
         ],
+    }
+}
+
+pub fn check_update_status(cfg: &Config) -> UpdateStatus {
+    update_status_from_decision(updater::check_now(cfg, crate::store::PRODUCT_ID_CODEX))
+}
+
+pub fn update_status_from_decision(decision: UpdateDecision) -> UpdateStatus {
+    match decision {
+        UpdateDecision::Available { current, latest } => UpdateStatus {
+            kind: UpdateStatusKind::Available,
+            title: "发现 Codex 新版本".into(),
+            message: format!("当前版本 {current}，可更新到 {latest}"),
+            current_version: Some(current),
+            latest_version: Some(latest),
+            actions: vec![
+                UpdateAction::UpdateNow,
+                UpdateAction::NotNow,
+                UpdateAction::SkipThisVersion,
+                UpdateAction::SnoozeOneDay,
+                UpdateAction::SnoozeSevenDays,
+                UpdateAction::Never,
+            ],
+        },
+        UpdateDecision::UpToDate { version } => UpdateStatus {
+            kind: UpdateStatusKind::UpToDate,
+            title: "Codex 已是最新版本".into(),
+            message: format!("当前版本 {version} 已是最新"),
+            current_version: Some(version.clone()),
+            latest_version: Some(version),
+            actions: Vec::new(),
+        },
+        UpdateDecision::Skipped { reason } => UpdateStatus {
+            kind: UpdateStatusKind::Skipped,
+            title: "暂不检查更新".into(),
+            message: reason,
+            current_version: None,
+            latest_version: None,
+            actions: Vec::new(),
+        },
+        UpdateDecision::Error(message) => UpdateStatus {
+            kind: UpdateStatusKind::Error,
+            title: "检查更新失败".into(),
+            message,
+            current_version: None,
+            latest_version: None,
+            actions: Vec::new(),
+        },
+    }
+}
+
+pub fn apply_update_action(cfg: &mut Config, action: UpdateAction, latest: &str) {
+    updater::apply_defer(cfg, defer_choice(action), latest);
+}
+
+pub fn update_event_from_msg(msg: InstallMsg) -> UpdateEvent {
+    match msg {
+        InstallMsg::Phase { phase, detail } => UpdateEvent {
+            kind: UpdateEventKind::Phase,
+            title: update_phase_title(&phase).into(),
+            detail: phase_detail(&detail),
+            progress: None,
+            version: None,
+            message: None,
+        },
+        InstallMsg::Progress(progress) => UpdateEvent {
+            kind: UpdateEventKind::Progress,
+            title: "更新进度".into(),
+            detail: String::new(),
+            progress,
+            version: None,
+            message: None,
+        },
+        InstallMsg::Done { version } => UpdateEvent {
+            kind: UpdateEventKind::Done,
+            title: "更新完成".into(),
+            detail: format!("已更新到 Codex {version}"),
+            progress: Some(1.0),
+            version: Some(version),
+            message: None,
+        },
+        InstallMsg::Error(message) => UpdateEvent {
+            kind: UpdateEventKind::Error,
+            title: "更新失败".into(),
+            detail: String::new(),
+            progress: None,
+            version: None,
+            message: Some(message),
+        },
     }
 }
 
@@ -277,12 +431,32 @@ fn core_fetcher(fetcher: BridgeFetcher) -> Fetcher {
     }
 }
 
+fn defer_choice(action: UpdateAction) -> updater::DeferChoice {
+    match action {
+        UpdateAction::UpdateNow => updater::DeferChoice::UpdateNow,
+        UpdateAction::NotNow => updater::DeferChoice::NotNow,
+        UpdateAction::SkipThisVersion => updater::DeferChoice::SkipThisVersion,
+        UpdateAction::SnoozeOneDay => updater::DeferChoice::SnoozeOneDay,
+        UpdateAction::SnoozeSevenDays => updater::DeferChoice::SnoozeSevenDays,
+        UpdateAction::Never => updater::DeferChoice::Never,
+    }
+}
+
 fn phase_title(phase: &str) -> &'static str {
     match phase {
         "Downloading" => "正在下载",
         "Extracting" => "正在解压",
         "Finalizing" => "正在完成",
         _ => "正在安装",
+    }
+}
+
+fn update_phase_title(phase: &str) -> &'static str {
+    match phase {
+        "Downloading" => "正在下载更新",
+        "Extracting" => "正在解压更新",
+        "Finalizing" => "正在完成更新",
+        _ => "正在更新",
     }
 }
 

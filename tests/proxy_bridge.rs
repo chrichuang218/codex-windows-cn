@@ -12,7 +12,10 @@ fn proxy_launch_status_reports_latest_installed_codex() {
     let status = proxy_launch_status(root.path(), &test_config(false));
 
     assert!(status.can_launch);
-    assert!(status.codex_exe.expect("codex exe path").ends_with(r"1.2.0\Codex.exe"));
+    assert!(status
+        .codex_exe
+        .expect("codex exe path")
+        .ends_with(r"1.2.0\Codex.exe"));
     assert_eq!(status.message, "可以启动 Codex");
 }
 
@@ -52,10 +55,8 @@ struct TestRoot {
 
 impl TestRoot {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "codex-windows-cn-{name}-{}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("codex-windows-cn-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("create test root");
         Self { path }

@@ -3,7 +3,7 @@
 use codex_windows_cn::{
     bridge::{
         self, AppStatus, InstallRequest, InstallStart, InstallerDefaults, ProxyLaunchResult,
-        ProxyLaunchStatus,
+        ProxyLaunchStatus, UpdateAction, UpdateActionResult, UpdateStart, UpdateStatus,
     },
     config::Config,
     installer, mode, proxy,
@@ -49,6 +49,40 @@ fn launch_codex() -> Result<ProxyLaunchResult, String> {
     })
 }
 
+#[tauri::command]
+fn check_update_status() -> Result<UpdateStatus, String> {
+    let (_root, cfg) = proxy_context()?;
+    Ok(bridge::check_update_status(&cfg))
+}
+
+#[tauri::command]
+fn apply_update_action(
+    action: UpdateAction,
+    latest_version: String,
+) -> Result<UpdateActionResult, String> {
+    let (root, mut cfg) = proxy_context()?;
+    bridge::apply_update_action(&mut cfg, action, &latest_version);
+    cfg.save_runtime(&root)
+        .map_err(|cause| format!("保存更新设置失败：{cause:#}"))?;
+    Ok(UpdateActionResult {
+        applied: true,
+        message: "已保存更新提醒设置".into(),
+    })
+}
+
+#[tauri::command]
+fn start_update(app: tauri::AppHandle) -> Result<UpdateStart, String> {
+    let (root, _cfg) = proxy_context()?;
+
+    std::thread::spawn(move || {
+        installer::update(root, move |msg| {
+            let _ = app.emit("update://event", bridge::update_event_from_msg(msg));
+        });
+    });
+
+    Ok(UpdateStart { accepted: true })
+}
+
 fn proxy_context() -> Result<(std::path::PathBuf, Config), String> {
     let root = mode::install_root().map_err(|cause| format!("无法读取安装目录：{cause:#}"))?;
     let cfg = Config::load_runtime(&root).map_err(|cause| format!("尚未完成安装：{cause:#}"))?;
@@ -62,7 +96,10 @@ fn main() {
             installer_defaults,
             start_install,
             proxy_launch_status,
-            launch_codex
+            launch_codex,
+            check_update_status,
+            apply_update_action,
+            start_update
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Codex Windows 中文助手");

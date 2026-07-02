@@ -13,7 +13,11 @@ fn installer_defaults_offer_a_recommended_user_install_path() {
     assert_eq!(defaults.recommended_mode, BridgeInstallMode::User);
     assert_eq!(defaults.recommended_fetcher, BridgeFetcher::Direct);
     assert_eq!(
-        defaults.modes.iter().map(|mode| mode.mode).collect::<Vec<_>>(),
+        defaults
+            .modes
+            .iter()
+            .map(|mode| mode.mode)
+            .collect::<Vec<_>>(),
         vec![
             BridgeInstallMode::Portable,
             BridgeInstallMode::User,

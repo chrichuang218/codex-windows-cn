@@ -5,7 +5,10 @@ import type {
   InstallEvent,
   InstallerDefaults,
   InstallMode,
-  ProxyLaunchStatus
+  ProxyLaunchStatus,
+  UpdateAction,
+  UpdateEvent,
+  UpdateStatus
 } from "./bridge";
 import { mainPathLabels, tauriBridge } from "./bridge";
 import "./styles.css";
@@ -18,22 +21,32 @@ export function App({ bridge = tauriBridge }: AppProps) {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [installerDefaults, setInstallerDefaults] = useState<InstallerDefaults | null>(null);
   const [proxyStatus, setProxyStatus] = useState<ProxyLaunchStatus | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [selectedMode, setSelectedMode] = useState<InstallMode | null>(null);
   const [installState, setInstallState] = useState<"idle" | "starting" | "running">("idle");
   const [installEvent, setInstallEvent] = useState<InstallEvent | null>(null);
   const [launchState, setLaunchState] = useState<"idle" | "launching">("idle");
   const [launchMessage, setLaunchMessage] = useState<string | null>(null);
+  const [updateState, setUpdateState] = useState<"idle" | "running">("idle");
+  const [updateEvent, setUpdateEvent] = useState<UpdateEvent | null>(null);
+  const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
 
-    Promise.all([bridge.getAppStatus(), bridge.getInstallerDefaults(), bridge.getProxyLaunchStatus()])
-      .then(([nextStatus, nextInstallerDefaults, nextProxyStatus]) => {
+    Promise.all([
+      bridge.getAppStatus(),
+      bridge.getInstallerDefaults(),
+      bridge.getProxyLaunchStatus(),
+      bridge.checkUpdateStatus()
+    ])
+      .then(([nextStatus, nextInstallerDefaults, nextProxyStatus, nextUpdateStatus]) => {
         if (alive) {
           setStatus(nextStatus);
           setInstallerDefaults(nextInstallerDefaults);
           setProxyStatus(nextProxyStatus);
+          setUpdateStatus(nextUpdateStatus);
           setSelectedMode(nextInstallerDefaults.recommendedMode);
         }
       })
@@ -49,6 +62,7 @@ export function App({ bridge = tauriBridge }: AppProps) {
   }, [bridge]);
 
   useEffect(() => bridge.onInstallEvent(setInstallEvent), [bridge]);
+  useEffect(() => bridge.onUpdateEvent(setUpdateEvent), [bridge]);
 
   if (error) {
     return (
@@ -62,7 +76,7 @@ export function App({ bridge = tauriBridge }: AppProps) {
     );
   }
 
-  if (!status || !installerDefaults || !proxyStatus || !selectedMode) {
+  if (!status || !installerDefaults || !proxyStatus || !updateStatus || !selectedMode) {
     return (
       <main className="shell shell-center">
         <section className="notice">
@@ -115,6 +129,29 @@ export function App({ bridge = tauriBridge }: AppProps) {
       setLaunchState("idle");
     }
   };
+
+  const startUpdate = async () => {
+    setUpdateState("running");
+    setUpdateEvent(null);
+    setUpdateMessage(null);
+    try {
+      await bridge.startUpdate();
+    } catch (cause) {
+      setUpdateState("idle");
+      setUpdateMessage(cause instanceof Error ? cause.message : "启动更新失败");
+    }
+  };
+
+  const applyUpdateAction = async (action: UpdateAction) => {
+    const latestVersion = updateStatus.latestVersion ?? "";
+    const result = await bridge.applyUpdateAction(action, latestVersion);
+    setUpdateMessage(result.message);
+  };
+
+  const updateProgress =
+    updateEvent?.progress === null || updateEvent?.progress === undefined
+      ? null
+      : Math.round(updateEvent.progress * 100);
 
   return (
     <main className="shell">
@@ -229,6 +266,66 @@ export function App({ bridge = tauriBridge }: AppProps) {
           {launchMessage ? <span>{launchMessage}</span> : null}
         </div>
       </section>
+
+      <section className="install-panel launch-panel" aria-label="检查更新">
+        <div className="section-heading">
+          <p className="eyebrow">主路径 3</p>
+          <h2>检查更新</h2>
+        </div>
+
+        <div className="launch-status">
+          <strong>{updateStatus.title}</strong>
+          <span>{updateStatus.message}</span>
+        </div>
+
+        {updateStatus.actions.length > 0 ? (
+          <div className="update-actions">
+            {updateStatus.actions.includes("updateNow") ? (
+              <button
+                className="primary-button"
+                disabled={updateState !== "idle"}
+                onClick={startUpdate}
+                type="button"
+              >
+                立即更新
+              </button>
+            ) : null}
+            {updateStatus.actions
+              .filter((action) => action !== "updateNow")
+              .map((action) => (
+                <button
+                  className="secondary-button"
+                  key={action}
+                  onClick={() => applyUpdateAction(action)}
+                  type="button"
+                >
+                  {updateActionLabels[action]}
+                </button>
+              ))}
+          </div>
+        ) : null}
+
+        {updateState !== "idle" ? <span className="inline-status">正在更新</span> : null}
+        {updateMessage ? <span className="inline-status">{updateMessage}</span> : null}
+
+        {updateState !== "idle" && updateEvent ? (
+          <div className="install-progress">
+            <strong>{updateEvent.title}</strong>
+            {updateEvent.detail ? <span>{updateEvent.detail}</span> : null}
+            {updateProgress !== null ? (
+              <div
+                aria-valuemax={100}
+                aria-valuemin={0}
+                aria-valuenow={updateProgress}
+                className="progress-track"
+                role="progressbar"
+              >
+                <div style={{ width: `${updateProgress}%` }} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
     </main>
   );
 }
@@ -237,4 +334,12 @@ const fetcherLabels = {
   direct: "直连 Microsoft Store",
   winget: "winget",
   localFile: "本地 MSIX"
+};
+
+const updateActionLabels: Record<Exclude<UpdateAction, "updateNow">, string> = {
+  notNow: "稍后提醒",
+  skipThisVersion: "跳过此版本",
+  snoozeOneDay: "1 天后提醒",
+  snoozeSevenDays: "7 天后提醒",
+  never: "关闭提醒"
 };
