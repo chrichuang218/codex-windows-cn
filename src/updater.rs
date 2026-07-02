@@ -21,9 +21,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Owner/repo for the launcher's own GitHub releases. Tweak here if the
 /// project ever moves.
-pub const LAUNCHER_REPO: &str = "vaportail/codex-windows-updater";
+pub const LAUNCHER_REPO: &str = "chrichuang218/codex-windows-cn";
 pub const LAUNCHER_LATEST_API: &str =
-    "https://api.github.com/repos/vaportail/codex-windows-updater/releases/latest";
+    "https://api.github.com/repos/chrichuang218/codex-windows-cn/releases/latest";
 
 #[derive(Debug, Clone)]
 pub enum UpdateDecision {

@@ -1,10 +1,11 @@
 use crate::config::{Config, InstallMode};
 use crate::installer::{self, InstallMsg, InstallOptions};
+use crate::launcher_update::LauncherUpdateMsg;
 use crate::proxy;
 use crate::safety;
 use crate::store::Fetcher;
 use crate::uninstall::UninstallMsg;
-use crate::updater::{self, UpdateDecision};
+use crate::updater::{self, LauncherDecision, UpdateDecision};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -139,6 +140,71 @@ pub struct UpdateStart {
 pub struct UpdateActionResult {
     pub applied: bool,
     pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherUpdateStatus {
+    pub kind: LauncherUpdateStatusKind,
+    pub title: String,
+    pub message: String,
+    pub current_version: Option<String>,
+    pub latest_version: Option<String>,
+    pub release_url: Option<String>,
+    pub actions: Vec<LauncherUpdateAction>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LauncherUpdateStatusKind {
+    UpToDate,
+    Available,
+    Skipped,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LauncherUpdateAction {
+    UpdateNow,
+    ViewRelease,
+    NotNow,
+    SkipThisVersion,
+    SnoozeOneDay,
+    SnoozeSevenDays,
+    Never,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherUpdateActionResult {
+    pub applied: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherUpdateStart {
+    pub accepted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherUpdateEvent {
+    pub kind: LauncherUpdateEventKind,
+    pub title: String,
+    pub detail: String,
+    pub progress: Option<f32>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LauncherUpdateEventKind {
+    Phase,
+    Progress,
+    Done,
+    Error,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -293,6 +359,59 @@ pub fn update_status_from_decision(decision: UpdateDecision) -> UpdateStatus {
     }
 }
 
+pub fn launcher_update_status_from_decision(decision: LauncherDecision) -> LauncherUpdateStatus {
+    match decision {
+        LauncherDecision::Available {
+            current,
+            latest,
+            release_url,
+        } => LauncherUpdateStatus {
+            kind: LauncherUpdateStatusKind::Available,
+            title: "发现启动器新版本".into(),
+            message: format!("当前版本 {current}，可更新到 {latest}"),
+            current_version: Some(current),
+            latest_version: Some(latest),
+            release_url: Some(release_url),
+            actions: vec![
+                LauncherUpdateAction::UpdateNow,
+                LauncherUpdateAction::ViewRelease,
+                LauncherUpdateAction::NotNow,
+                LauncherUpdateAction::SkipThisVersion,
+                LauncherUpdateAction::SnoozeOneDay,
+                LauncherUpdateAction::SnoozeSevenDays,
+                LauncherUpdateAction::Never,
+            ],
+        },
+        LauncherDecision::UpToDate { version } => LauncherUpdateStatus {
+            kind: LauncherUpdateStatusKind::UpToDate,
+            title: "启动器已是最新".into(),
+            message: format!("当前启动器版本 {version}"),
+            current_version: Some(version.clone()),
+            latest_version: Some(version),
+            release_url: None,
+            actions: Vec::new(),
+        },
+        LauncherDecision::Skipped { reason } => LauncherUpdateStatus {
+            kind: LauncherUpdateStatusKind::Skipped,
+            title: "暂不检查启动器更新".into(),
+            message: reason,
+            current_version: None,
+            latest_version: None,
+            release_url: None,
+            actions: Vec::new(),
+        },
+        LauncherDecision::Error(message) => LauncherUpdateStatus {
+            kind: LauncherUpdateStatusKind::Error,
+            title: "检查启动器更新失败".into(),
+            message,
+            current_version: None,
+            latest_version: None,
+            release_url: None,
+            actions: Vec::new(),
+        },
+    }
+}
+
 pub fn uninstall_confirmation(root: &Path) -> UninstallConfirmation {
     UninstallConfirmation {
         title: "确认卸载 Codex Windows 中文助手".into(),
@@ -372,6 +491,10 @@ pub fn apply_update_action(cfg: &mut Config, action: UpdateAction, latest: &str)
     updater::apply_defer(cfg, defer_choice(action), latest);
 }
 
+pub fn apply_launcher_update_action(cfg: &mut Config, action: LauncherUpdateAction, latest: &str) {
+    updater::apply_launcher_defer(cfg, launcher_defer_choice(action), latest);
+}
+
 pub fn update_event_from_msg(msg: InstallMsg) -> UpdateEvent {
     match msg {
         InstallMsg::Phase { phase, detail } => UpdateEvent {
@@ -404,6 +527,39 @@ pub fn update_event_from_msg(msg: InstallMsg) -> UpdateEvent {
             detail: String::new(),
             progress: None,
             version: None,
+            message: Some(message),
+        },
+    }
+}
+
+pub fn launcher_update_event_from_msg(msg: LauncherUpdateMsg) -> LauncherUpdateEvent {
+    match msg {
+        LauncherUpdateMsg::Phase { phase, detail } => LauncherUpdateEvent {
+            kind: LauncherUpdateEventKind::Phase,
+            title: launcher_update_phase_title(&phase).into(),
+            detail,
+            progress: None,
+            message: None,
+        },
+        LauncherUpdateMsg::Progress(progress) => LauncherUpdateEvent {
+            kind: LauncherUpdateEventKind::Progress,
+            title: "自更新进度".into(),
+            detail: String::new(),
+            progress,
+            message: None,
+        },
+        LauncherUpdateMsg::Done => LauncherUpdateEvent {
+            kind: LauncherUpdateEventKind::Done,
+            title: "自更新完成".into(),
+            detail: "启动器已更新，重启后生效".into(),
+            progress: Some(1.0),
+            message: None,
+        },
+        LauncherUpdateMsg::Error(message) => LauncherUpdateEvent {
+            kind: LauncherUpdateEventKind::Error,
+            title: "自更新失败".into(),
+            detail: String::new(),
+            progress: None,
             message: Some(message),
         },
     }
@@ -569,6 +725,18 @@ fn defer_choice(action: UpdateAction) -> updater::DeferChoice {
     }
 }
 
+fn launcher_defer_choice(action: LauncherUpdateAction) -> updater::LauncherDeferChoice {
+    match action {
+        LauncherUpdateAction::UpdateNow => updater::LauncherDeferChoice::ApplyUpdate,
+        LauncherUpdateAction::ViewRelease => updater::LauncherDeferChoice::ViewRelease,
+        LauncherUpdateAction::NotNow => updater::LauncherDeferChoice::NotNow,
+        LauncherUpdateAction::SkipThisVersion => updater::LauncherDeferChoice::SkipThisVersion,
+        LauncherUpdateAction::SnoozeOneDay => updater::LauncherDeferChoice::SnoozeOneDay,
+        LauncherUpdateAction::SnoozeSevenDays => updater::LauncherDeferChoice::SnoozeSevenDays,
+        LauncherUpdateAction::Never => updater::LauncherDeferChoice::Never,
+    }
+}
+
 fn phase_title(phase: &str) -> &'static str {
     match phase {
         "Downloading" => "正在下载",
@@ -584,6 +752,16 @@ fn update_phase_title(phase: &str) -> &'static str {
         "Extracting" => "正在解压更新",
         "Finalizing" => "正在完成更新",
         _ => "正在更新",
+    }
+}
+
+fn launcher_update_phase_title(phase: &str) -> &'static str {
+    match phase {
+        "Downloading launcher" => "正在下载启动器",
+        "Verifying" => "正在校验 SHA-256",
+        "Smoke-testing" => "正在运行自检",
+        "Installing" => "正在替换启动器",
+        _ => "正在自更新",
     }
 }
 

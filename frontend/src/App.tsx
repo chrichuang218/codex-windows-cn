@@ -5,6 +5,9 @@ import type {
   InstallEvent,
   InstallerDefaults,
   InstallMode,
+  LauncherUpdateAction,
+  LauncherUpdateEvent,
+  LauncherUpdateStatus,
   ProxyLaunchStatus,
   UninstallConfirmation,
   UninstallEvent,
@@ -25,6 +28,8 @@ export function App({ bridge = tauriBridge }: AppProps) {
   const [installerDefaults, setInstallerDefaults] = useState<InstallerDefaults | null>(null);
   const [proxyStatus, setProxyStatus] = useState<ProxyLaunchStatus | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [launcherUpdateStatus, setLauncherUpdateStatus] =
+    useState<LauncherUpdateStatus | null>(null);
   const [uninstallConfirmation, setUninstallConfirmation] =
     useState<UninstallConfirmation | null>(null);
   const [uninstallStatus, setUninstallStatus] = useState<UninstallStatus | null>(null);
@@ -36,6 +41,9 @@ export function App({ bridge = tauriBridge }: AppProps) {
   const [updateState, setUpdateState] = useState<"idle" | "running">("idle");
   const [updateEvent, setUpdateEvent] = useState<UpdateEvent | null>(null);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
+  const [launcherUpdateState, setLauncherUpdateState] = useState<"idle" | "running">("idle");
+  const [launcherUpdateEvent, setLauncherUpdateEvent] = useState<LauncherUpdateEvent | null>(null);
+  const [launcherUpdateMessage, setLauncherUpdateMessage] = useState<string | null>(null);
   const [uninstallState, setUninstallState] = useState<"idle" | "running">("idle");
   const [uninstallEvent, setUninstallEvent] = useState<UninstallEvent | null>(null);
   const [uninstallMessage, setUninstallMessage] = useState<string | null>(null);
@@ -49,6 +57,7 @@ export function App({ bridge = tauriBridge }: AppProps) {
       bridge.getInstallerDefaults(),
       bridge.getProxyLaunchStatus(),
       bridge.checkUpdateStatus(),
+      bridge.checkLauncherUpdateStatus(),
       bridge.getUninstallConfirmation(),
       bridge.getUninstallStatus()
     ])
@@ -58,6 +67,7 @@ export function App({ bridge = tauriBridge }: AppProps) {
           nextInstallerDefaults,
           nextProxyStatus,
           nextUpdateStatus,
+          nextLauncherUpdateStatus,
           nextUninstallConfirmation,
           nextUninstallStatus
         ]) => {
@@ -66,6 +76,7 @@ export function App({ bridge = tauriBridge }: AppProps) {
             setInstallerDefaults(nextInstallerDefaults);
             setProxyStatus(nextProxyStatus);
             setUpdateStatus(nextUpdateStatus);
+            setLauncherUpdateStatus(nextLauncherUpdateStatus);
             setUninstallConfirmation(nextUninstallConfirmation);
             setUninstallStatus(nextUninstallStatus);
             setSelectedMode(nextInstallerDefaults.recommendedMode);
@@ -85,6 +96,7 @@ export function App({ bridge = tauriBridge }: AppProps) {
 
   useEffect(() => bridge.onInstallEvent(setInstallEvent), [bridge]);
   useEffect(() => bridge.onUpdateEvent(setUpdateEvent), [bridge]);
+  useEffect(() => bridge.onLauncherUpdateEvent(setLauncherUpdateEvent), [bridge]);
   useEffect(() => bridge.onUninstallEvent(setUninstallEvent), [bridge]);
 
   if (error) {
@@ -104,6 +116,7 @@ export function App({ bridge = tauriBridge }: AppProps) {
     !installerDefaults ||
     !proxyStatus ||
     !updateStatus ||
+    !launcherUpdateStatus ||
     !uninstallConfirmation ||
     !uninstallStatus ||
     !selectedMode
@@ -183,6 +196,30 @@ export function App({ bridge = tauriBridge }: AppProps) {
     updateEvent?.progress === null || updateEvent?.progress === undefined
       ? null
       : Math.round(updateEvent.progress * 100);
+
+  const startLauncherUpdate = async () => {
+    const latestVersion = launcherUpdateStatus.latestVersion ?? "";
+    setLauncherUpdateState("running");
+    setLauncherUpdateEvent(null);
+    setLauncherUpdateMessage(null);
+    try {
+      await bridge.startLauncherUpdate(latestVersion);
+    } catch (cause) {
+      setLauncherUpdateState("idle");
+      setLauncherUpdateMessage(cause instanceof Error ? cause.message : "启动自更新失败");
+    }
+  };
+
+  const applyLauncherUpdateAction = async (action: LauncherUpdateAction) => {
+    const latestVersion = launcherUpdateStatus.latestVersion ?? "";
+    const result = await bridge.applyLauncherUpdateAction(action, latestVersion);
+    setLauncherUpdateMessage(result.message);
+  };
+
+  const launcherUpdateProgress =
+    launcherUpdateEvent?.progress === null || launcherUpdateEvent?.progress === undefined
+      ? null
+      : Math.round(launcherUpdateEvent.progress * 100);
 
   const startUninstall = async () => {
     setUninstallState("running");
@@ -433,6 +470,75 @@ export function App({ bridge = tauriBridge }: AppProps) {
           </div>
         ) : null}
       </section>
+
+      <section className="install-panel launch-panel" aria-label="启动器自更新">
+        <div className="section-heading">
+          <p className="eyebrow">主路径 5</p>
+          <h2>自更新</h2>
+        </div>
+
+        <div className="launch-status">
+          <strong>{launcherUpdateStatus.title}</strong>
+          <span>{launcherUpdateStatus.message}</span>
+          {launcherUpdateStatus.releaseUrl ? (
+            <a href={launcherUpdateStatus.releaseUrl} rel="noreferrer" target="_blank">
+              查看发布页
+            </a>
+          ) : null}
+        </div>
+
+        {launcherUpdateStatus.actions.length > 0 ? (
+          <div className="update-actions">
+            {launcherUpdateStatus.actions.includes("updateNow") ? (
+              <button
+                className="primary-button"
+                disabled={launcherUpdateState !== "idle"}
+                onClick={startLauncherUpdate}
+                type="button"
+              >
+                应用更新
+              </button>
+            ) : null}
+            {launcherUpdateStatus.actions
+              .filter((action) => action !== "updateNow" && action !== "viewRelease")
+              .map((action) => (
+                <button
+                  className="secondary-button"
+                  key={action}
+                  onClick={() => applyLauncherUpdateAction(action)}
+                  type="button"
+                >
+                  {launcherUpdateActionLabels[action]}
+                </button>
+              ))}
+          </div>
+        ) : null}
+
+        {launcherUpdateState !== "idle" ? (
+          <span className="inline-status">正在自更新</span>
+        ) : null}
+        {launcherUpdateMessage ? (
+          <span className="inline-status">{launcherUpdateMessage}</span>
+        ) : null}
+
+        {launcherUpdateState !== "idle" && launcherUpdateEvent ? (
+          <div className="install-progress">
+            <strong>{launcherUpdateEvent.title}</strong>
+            {launcherUpdateEvent.detail ? <span>{launcherUpdateEvent.detail}</span> : null}
+            {launcherUpdateProgress !== null ? (
+              <div
+                aria-valuemax={100}
+                aria-valuemin={0}
+                aria-valuenow={launcherUpdateProgress}
+                className="progress-track"
+                role="progressbar"
+              >
+                <div style={{ width: `${launcherUpdateProgress}%` }} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
     </main>
   );
 }
@@ -444,6 +550,17 @@ const fetcherLabels = {
 };
 
 const updateActionLabels: Record<Exclude<UpdateAction, "updateNow">, string> = {
+  notNow: "稍后提醒",
+  skipThisVersion: "跳过此版本",
+  snoozeOneDay: "1 天后提醒",
+  snoozeSevenDays: "7 天后提醒",
+  never: "关闭提醒"
+};
+
+const launcherUpdateActionLabels: Record<
+  Exclude<LauncherUpdateAction, "updateNow" | "viewRelease">,
+  string
+> = {
   notNow: "稍后提醒",
   skipThisVersion: "跳过此版本",
   snoozeOneDay: "1 天后提醒",

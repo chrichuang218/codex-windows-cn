@@ -2,12 +2,13 @@
 
 use codex_windows_cn::{
     bridge::{
-        self, AppStatus, InstallRequest, InstallStart, InstallerDefaults, ProxyLaunchResult,
+        self, AppStatus, InstallRequest, InstallStart, InstallerDefaults, LauncherUpdateAction,
+        LauncherUpdateActionResult, LauncherUpdateStart, LauncherUpdateStatus, ProxyLaunchResult,
         ProxyLaunchStatus, UninstallConfirmation, UninstallStart, UninstallStatus, UpdateAction,
         UpdateActionResult, UpdateStart, UpdateStatus,
     },
     config::Config,
-    installer, mode, proxy, uninstall,
+    installer, launcher_update, mode, proxy, uninstall, updater,
 };
 use tauri::Emitter;
 
@@ -85,6 +86,50 @@ fn start_update(app: tauri::AppHandle) -> Result<UpdateStart, String> {
 }
 
 #[tauri::command]
+fn check_launcher_update_status() -> Result<LauncherUpdateStatus, String> {
+    Ok(bridge::launcher_update_status_from_decision(
+        updater::check_launcher_now(),
+    ))
+}
+
+#[tauri::command]
+fn apply_launcher_update_action(
+    action: LauncherUpdateAction,
+    latest_version: String,
+) -> Result<LauncherUpdateActionResult, String> {
+    let (root, mut cfg) = proxy_context()?;
+    bridge::apply_launcher_update_action(&mut cfg, action, &latest_version);
+    cfg.save_runtime(&root)
+        .map_err(|cause| format!("保存自更新设置失败：{cause:#}"))?;
+    Ok(LauncherUpdateActionResult {
+        applied: true,
+        message: "已保存自更新提醒设置".into(),
+    })
+}
+
+#[tauri::command]
+fn start_launcher_update(
+    app: tauri::AppHandle,
+    latest_version: String,
+) -> Result<LauncherUpdateStart, String> {
+    let latest_version = latest_version.trim().to_string();
+    if latest_version.is_empty() {
+        return Err("缺少启动器目标版本".into());
+    }
+
+    std::thread::spawn(move || {
+        launcher_update::apply(&latest_version, move |msg| {
+            let _ = app.emit(
+                "launcher-update://event",
+                bridge::launcher_update_event_from_msg(msg),
+            );
+        });
+    });
+
+    Ok(LauncherUpdateStart { accepted: true })
+}
+
+#[tauri::command]
 fn uninstall_confirmation() -> Result<UninstallConfirmation, String> {
     let ctx =
         uninstall::load_context().map_err(|cause| format!("无法读取卸载上下文：{cause:#}"))?;
@@ -132,6 +177,9 @@ fn main() {
             check_update_status,
             apply_update_action,
             start_update,
+            check_launcher_update_status,
+            apply_launcher_update_action,
+            start_launcher_update,
             uninstall_confirmation,
             uninstall_status,
             start_uninstall

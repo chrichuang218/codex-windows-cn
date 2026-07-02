@@ -75,6 +75,29 @@ const uninstallBridgeDefaults = {
   onUninstallEvent: () => () => {}
 };
 
+const launcherUpdateBridgeDefaults = {
+  checkLauncherUpdateStatus: async () => ({
+    kind: "available" as const,
+    title: "发现启动器新版本",
+    message: "当前版本 0.1.2，可更新到 0.2.0",
+    currentVersion: "0.1.2",
+    latestVersion: "0.2.0",
+    releaseUrl: "https://github.com/chrichuang218/codex-windows-cn/releases/tag/v0.2.0",
+    actions: [
+      "updateNow" as const,
+      "viewRelease" as const,
+      "notNow" as const,
+      "skipThisVersion" as const,
+      "snoozeOneDay" as const,
+      "snoozeSevenDays" as const,
+      "never" as const
+    ]
+  }),
+  startLauncherUpdate: async () => ({ accepted: true }),
+  applyLauncherUpdateAction: async () => ({ applied: true, message: "已保存自更新提醒设置" }),
+  onLauncherUpdateEvent: () => () => {}
+};
+
 afterEach(() => {
   cleanup();
 });
@@ -103,7 +126,8 @@ describe("Codex Windows 中文助手 shell", () => {
       }),
       launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
       ...updateBridgeDefaults,
-      ...uninstallBridgeDefaults
+      ...uninstallBridgeDefaults,
+      ...launcherUpdateBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -135,7 +159,8 @@ describe("Codex Windows 中文助手 shell", () => {
       }),
       launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
       ...updateBridgeDefaults,
-      ...uninstallBridgeDefaults
+      ...uninstallBridgeDefaults,
+      ...launcherUpdateBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -172,7 +197,8 @@ describe("Codex Windows 中文助手 shell", () => {
       }),
       launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
       ...updateBridgeDefaults,
-      ...uninstallBridgeDefaults
+      ...uninstallBridgeDefaults,
+      ...launcherUpdateBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -213,7 +239,8 @@ describe("Codex Windows 中文助手 shell", () => {
       }),
       launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
       ...updateBridgeDefaults,
-      ...uninstallBridgeDefaults
+      ...uninstallBridgeDefaults,
+      ...launcherUpdateBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -268,7 +295,8 @@ describe("Codex Windows 中文助手 shell", () => {
         return { launched: true, message: "已启动 Codex" };
       },
       ...updateBridgeDefaults,
-      ...uninstallBridgeDefaults
+      ...uninstallBridgeDefaults,
+      ...launcherUpdateBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -327,7 +355,8 @@ describe("Codex Windows 中文助手 shell", () => {
         emitUpdateEvent = handler;
         return () => {};
       },
-      ...uninstallBridgeDefaults
+      ...uninstallBridgeDefaults,
+      ...launcherUpdateBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -392,7 +421,8 @@ describe("Codex Windows 中文助手 shell", () => {
       onUninstallEvent: (handler) => {
         emitUninstallEvent = handler;
         return () => {};
-      }
+      },
+      ...launcherUpdateBridgeDefaults
     };
 
     render(<App bridge={bridge} />);
@@ -420,5 +450,85 @@ describe("Codex Windows 中文助手 shell", () => {
 
     expect(await screen.findByText("卸载完成")).toBeVisible();
     expect(screen.getByText("卸载日志：C:\\Temp\\codex-uninstall.log")).toBeVisible();
+  });
+
+  test("renders and starts the launcher self-update path", async () => {
+    let startedLauncherUpdate = false;
+    let emitLauncherUpdateEvent:
+      | ((event: {
+          kind: "phase" | "progress" | "done" | "error";
+          title: string;
+          detail: string;
+          progress: number | null;
+          message: string | null;
+        }) => void)
+      | null = null;
+    const bridge: AppBridge = {
+      getAppStatus: async () => ({
+        productName: "Codex Windows 中文助手",
+        v1Boundary: "中文安装更新助手",
+        mainPaths: ["install", "proxyLaunch", "checkAndUpdate", "uninstall", "launcherSelfUpdate"]
+      }),
+      getInstallerDefaults: async () => installerDefaults,
+      startInstall: async () => ({ accepted: true }),
+      onInstallEvent: () => () => {},
+      getProxyLaunchStatus: async () => ({
+        canLaunch: true,
+        codexExe: "C:\\Users\\tester\\AppData\\Local\\Codex\\versions\\1.2.0\\Codex.exe",
+        message: "可以启动 Codex"
+      }),
+      launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
+      ...updateBridgeDefaults,
+      ...uninstallBridgeDefaults,
+      checkLauncherUpdateStatus: launcherUpdateBridgeDefaults.checkLauncherUpdateStatus,
+      startLauncherUpdate: async () => {
+        startedLauncherUpdate = true;
+        return { accepted: true };
+      },
+      applyLauncherUpdateAction: launcherUpdateBridgeDefaults.applyLauncherUpdateAction,
+      onLauncherUpdateEvent: (handler) => {
+        emitLauncherUpdateEvent = handler;
+        return () => {};
+      }
+    };
+
+    render(<App bridge={bridge} />);
+
+    expect(await screen.findByRole("heading", { name: "自更新" })).toBeVisible();
+    expect(screen.getByText("当前版本 0.1.2，可更新到 0.2.0")).toBeVisible();
+    expect(screen.getByRole("link", { name: "查看发布页" })).toHaveAttribute(
+      "href",
+      "https://github.com/chrichuang218/codex-windows-cn/releases/tag/v0.2.0"
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "应用更新" }));
+
+    expect(await screen.findByText("正在自更新")).toBeVisible();
+    expect(startedLauncherUpdate).toBe(true);
+
+    act(() => {
+      emitLauncherUpdateEvent?.({
+        kind: "phase",
+        title: "正在校验 SHA-256",
+        detail: "checking SHA-256",
+        progress: null,
+        message: null
+      });
+    });
+
+    expect(await screen.findByText("正在校验 SHA-256")).toBeVisible();
+
+    act(() => {
+      emitLauncherUpdateEvent?.({
+        kind: "done",
+        title: "自更新完成",
+        detail: "启动器已更新，重启后生效",
+        progress: 1,
+        message: null
+      });
+    });
+
+    expect(await screen.findByText("自更新完成")).toBeVisible();
+    expect(screen.getByText("启动器已更新，重启后生效")).toBeVisible();
   });
 });

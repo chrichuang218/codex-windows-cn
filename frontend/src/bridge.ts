@@ -105,6 +105,43 @@ export type UpdateEvent = {
   message: string | null;
 };
 
+export type LauncherUpdateStatusKind = "upToDate" | "available" | "skipped" | "error";
+export type LauncherUpdateAction =
+  | "updateNow"
+  | "viewRelease"
+  | "notNow"
+  | "skipThisVersion"
+  | "snoozeOneDay"
+  | "snoozeSevenDays"
+  | "never";
+
+export type LauncherUpdateStatus = {
+  kind: LauncherUpdateStatusKind;
+  title: string;
+  message: string;
+  currentVersion: string | null;
+  latestVersion: string | null;
+  releaseUrl: string | null;
+  actions: LauncherUpdateAction[];
+};
+
+export type LauncherUpdateStart = {
+  accepted: boolean;
+};
+
+export type LauncherUpdateActionResult = {
+  applied: boolean;
+  message: string;
+};
+
+export type LauncherUpdateEvent = {
+  kind: "phase" | "progress" | "done" | "error";
+  title: string;
+  detail: string;
+  progress: number | null;
+  message: string | null;
+};
+
 export type UninstallConfirmation = {
   title: string;
   root: string;
@@ -149,6 +186,13 @@ export type AppBridge = {
   getUninstallStatus: () => Promise<UninstallStatus>;
   startUninstall: () => Promise<UninstallStart>;
   onUninstallEvent: (handler: (event: UninstallEvent) => void) => () => void;
+  checkLauncherUpdateStatus: () => Promise<LauncherUpdateStatus>;
+  startLauncherUpdate: (latestVersion: string) => Promise<LauncherUpdateStart>;
+  applyLauncherUpdateAction: (
+    action: LauncherUpdateAction,
+    latestVersion: string
+  ) => Promise<LauncherUpdateActionResult>;
+  onLauncherUpdateEvent: (handler: (event: LauncherUpdateEvent) => void) => () => void;
 };
 
 const fallbackStatus: AppStatus = {
@@ -224,6 +268,16 @@ const fallbackUninstallStatus: UninstallStatus = {
   kind: "blocked",
   title: "无法卸载",
   message: "尚未完成安装"
+};
+
+const fallbackLauncherUpdateStatus: LauncherUpdateStatus = {
+  kind: "skipped",
+  title: "暂不检查启动器更新",
+  message: "仅在 Tauri 桌面环境中检查自更新",
+  currentVersion: null,
+  latestVersion: null,
+  releaseUrl: null,
+  actions: []
 };
 
 export const tauriBridge: AppBridge = {
@@ -360,6 +414,52 @@ export const tauriBridge: AppBridge = {
         }
       }
     );
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  },
+  checkLauncherUpdateStatus: () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve(fallbackLauncherUpdateStatus);
+    }
+
+    return invoke<LauncherUpdateStatus>("check_launcher_update_status");
+  },
+  startLauncherUpdate: (latestVersion) => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve({ accepted: true });
+    }
+
+    return invoke<LauncherUpdateStart>("start_launcher_update", { latestVersion });
+  },
+  applyLauncherUpdateAction: (action, latestVersion) => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve({ applied: true, message: "已保存自更新提醒设置" });
+    }
+
+    return invoke<LauncherUpdateActionResult>("apply_launcher_update_action", {
+      action,
+      latestVersion
+    });
+  },
+  onLauncherUpdateEvent: (handler) => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return () => {};
+    }
+
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    listen<LauncherUpdateEvent>("launcher-update://event", (event) =>
+      handler(event.payload)
+    ).then((nextUnlisten) => {
+      if (active) {
+        unlisten = nextUnlisten;
+      } else {
+        nextUnlisten();
+      }
+    });
 
     return () => {
       active = false;
