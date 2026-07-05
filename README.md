@@ -87,16 +87,17 @@ Release 产物由 GitHub Actions 构建，并发布 SHA256 文件。校验通过
 需要 Windows、Rust/MSVC 工具链，以及前端依赖：
 
 ```powershell
-npm --prefix frontend install
-npm --prefix frontend run build
-cargo build --release --features tauri/custom-protocol
+.\scripts\package-release.ps1
 ```
 
-输出文件位于：
+脚本会使用项目内的 Tauri CLI 执行正式构建，并生成可发布产物：
 
 ```text
-target/release/codex-launcher.exe
+dist/codex-launcher.exe
+dist/codex-launcher.exe.sha256
 ```
+
+不要用裸 `cargo build --release` 作为发布包；它可能生成仍指向 Vite 开发服务 `localhost:5173` 的 exe。
 
 常用验证：
 

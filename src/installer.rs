@@ -120,11 +120,7 @@ fn update_inner(root: &Path, on_msg: &dyn Fn(InstallMsg)) -> Result<String> {
     let downloads = root.join("downloads");
     std::fs::create_dir_all(&downloads)?;
 
-    let update_fetcher = match cfg.fetcher {
-        Fetcher::Direct | Fetcher::LocalFile => Fetcher::Winget,
-        Fetcher::Winget => Fetcher::Winget,
-    };
-
+    let update_fetcher = configured_update_fetcher(cfg.fetcher);
     emit_progress_detail(
         on_msg,
         "Downloading",
@@ -180,35 +176,20 @@ fn update_inner(root: &Path, on_msg: &dyn Fn(InstallMsg)) -> Result<String> {
     // the freshly-written install-root config takes effect on next launch.
     cfg.save_install(root)?;
 
-    // Refresh junction to point at the new version. If the user disabled it
-    // mid-life, tear down any stale link left from a previous install.
-    let junction_link = root.join("versions").join("current");
-    if cfg.use_current_junction {
-        if let Err(e) = junction::set_current(root, &result.version) {
-            eprintln!("warn: couldn't set versions/current junction: {e:#}");
-        }
-    } else {
-        let _ = junction::remove(&junction_link);
-    }
-
-    // Refresh Start Menu shortcut icon so it picks up the new version's
-    // Codex.exe, and bump the registry DisplayVersion/DisplayIcon so
-    // Add/Remove Programs stays accurate.
-    if let Ok(Some(link)) = shortcut::link_path(cfg.install_mode) {
-        if link.exists() {
-            if let Err(e) = write_shortcut(root, cfg.install_mode, &result.version) {
-                eprintln!("warn: shortcut refresh: {e:#}");
-            }
-        }
-    }
-    if cfg.register_uninstall {
-        if let Err(e) = write_registry(root, cfg.install_mode, &result.version) {
-            eprintln!("warn: registry refresh: {e:#}");
-        }
-    }
-
-    let _ = extract::prune_versions(root, cfg.keep_versions);
-    let _ = std::fs::remove_file(&result.msix_path);
+    // At this point the update is usable: the new version is extracted and
+    // updater.json points at it. Keep Windows shell integration and cleanup
+    // out of the critical path so slow AV / registry / shortcut work cannot
+    // leave the UI stuck on the final progress screen.
+    let post_update = PostUpdateWork {
+        root: root.to_path_buf(),
+        version: result.version.clone(),
+        mode: cfg.install_mode,
+        register_uninstall: cfg.register_uninstall,
+        keep_versions: cfg.keep_versions,
+        use_current_junction: cfg.use_current_junction,
+        msix_path: result.msix_path.clone(),
+    };
+    std::thread::spawn(move || run_post_update_work(post_update));
 
     Ok(result.version)
 }
@@ -360,6 +341,43 @@ fn run_post_install_work(work: PostInstallWork) {
     let _ = std::fs::remove_file(&work.msix_path);
 }
 
+struct PostUpdateWork {
+    root: PathBuf,
+    version: String,
+    mode: InstallMode,
+    register_uninstall: bool,
+    keep_versions: u32,
+    use_current_junction: bool,
+    msix_path: PathBuf,
+}
+
+fn run_post_update_work(work: PostUpdateWork) {
+    let junction_link = work.root.join("versions").join("current");
+    if work.use_current_junction {
+        if let Err(e) = junction::set_current(&work.root, &work.version) {
+            eprintln!("warn: couldn't set versions/current junction: {e:#}");
+        }
+    } else {
+        let _ = junction::remove(&junction_link);
+    }
+
+    if let Ok(Some(link)) = shortcut::link_path(work.mode) {
+        if link.exists() {
+            if let Err(e) = write_shortcut(&work.root, work.mode, &work.version) {
+                eprintln!("warn: shortcut refresh: {e:#}");
+            }
+        }
+    }
+    if work.register_uninstall {
+        if let Err(e) = write_registry(&work.root, work.mode, &work.version) {
+            eprintln!("warn: registry refresh: {e:#}");
+        }
+    }
+
+    let _ = extract::prune_versions(&work.root, work.keep_versions);
+    let _ = std::fs::remove_file(&work.msix_path);
+}
+
 /// Copy the currently-running launcher to `<root>/codex-launcher.exe`.
 /// Must be a no-op if source == dest (e.g. someone re-runs the installer
 /// from inside the install directory to reconfigure).
@@ -436,8 +454,16 @@ fn download_start_detail(fetcher: Fetcher) -> String {
 
 fn update_start_detail(fetcher: Fetcher) -> String {
     match fetcher {
+        Fetcher::Direct => "正在解析 Codex 下载地址；如果直连失败，将自动切换 winget。".into(),
         Fetcher::Winget => "正在调用 winget 下载 Codex；如果 winget 失败，将自动切换直连。".into(),
         other => download_start_detail(other),
+    }
+}
+
+fn configured_update_fetcher(fetcher: Fetcher) -> Fetcher {
+    match fetcher {
+        Fetcher::LocalFile => Fetcher::Direct,
+        other => other,
     }
 }
 
@@ -489,4 +515,35 @@ fn check_cancel(cancel: Option<&AtomicBool>) -> Result<()> {
         anyhow::bail!("安装已取消");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_keeps_configured_direct_fetcher() {
+        assert_eq!(configured_update_fetcher(Fetcher::Direct), Fetcher::Direct);
+    }
+
+    #[test]
+    fn update_keeps_configured_winget_fetcher() {
+        assert_eq!(configured_update_fetcher(Fetcher::Winget), Fetcher::Winget);
+    }
+
+    #[test]
+    fn update_normalizes_legacy_local_file_fetcher_to_direct() {
+        assert_eq!(
+            configured_update_fetcher(Fetcher::LocalFile),
+            Fetcher::Direct
+        );
+    }
+
+    #[test]
+    fn update_direct_detail_matches_actual_preferred_fetcher() {
+        assert_eq!(
+            update_start_detail(configured_update_fetcher(Fetcher::Direct)),
+            "正在解析 Codex 下载地址；如果直连失败，将自动切换 winget。"
+        );
+    }
 }

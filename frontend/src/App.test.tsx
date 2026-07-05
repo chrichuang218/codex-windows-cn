@@ -571,7 +571,7 @@ describe("Codex Windows 中文助手 shell", () => {
     fireEvent.click(await screen.findByRole("button", { name: "立即更新" }));
     expect(startedUpdate).toBe(true);
     expect(await screen.findByRole("heading", { name: "正在下载更新" })).toBeVisible();
-    expect(screen.getByText("正在调用 winget 下载 Codex；如果 winget 失败，将自动切换直连。")).toBeVisible();
+    expect(screen.getByText("正在使用已配置的下载方式获取 Codex 更新包。")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "发现 Codex 新版本" })).toBeNull();
     expect(screen.queryByRole("button", { name: "稍后提醒" })).toBeNull();
 

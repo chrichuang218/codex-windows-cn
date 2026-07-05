@@ -457,7 +457,7 @@ export function useAppController(bridge: AppBridge) {
     setUpdateEvent({
       kind: "phase",
       title: "正在下载更新",
-      detail: "正在调用 winget 下载 Codex；如果 winget 失败，将自动切换直连。",
+      detail: "正在使用已配置的下载方式获取 Codex 更新包。",
       progress: null,
       version: null,
       message: null

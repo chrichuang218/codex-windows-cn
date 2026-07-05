@@ -426,24 +426,36 @@ fn extract_file_urls(xml: &str) -> Vec<String> {
     let mut buf = Vec::new();
     let mut in_file_location = false;
     let mut in_url = false;
+    let mut current_url = String::new();
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => match local_name(e.name().as_ref()) {
                 b"FileLocation" => in_file_location = true,
-                b"Url" if in_file_location => in_url = true,
+                b"Url" if in_file_location => {
+                    in_url = true;
+                    current_url.clear();
+                }
                 _ => {}
             },
             Ok(Event::End(e)) => match local_name(e.name().as_ref()) {
                 b"FileLocation" => in_file_location = false,
-                b"Url" => in_url = false,
+                b"Url" => {
+                    in_url = false;
+                    if !current_url.is_empty() {
+                        urls.push(current_url.clone());
+                    }
+                }
                 _ => {}
             },
             Ok(Event::Text(t)) if in_url => {
                 if let Ok(decoded) = t.decode() {
                     if let Ok(s) = unescape(&decoded) {
-                        urls.push(s.into_owned());
+                        current_url.push_str(&s);
                     }
                 }
+            }
+            Ok(Event::GeneralRef(r)) if in_url => {
+                append_xml_ref(&mut current_url, r.as_ref());
             }
             Ok(Event::Eof) => break,
             Err(_) => break,
@@ -452,4 +464,42 @@ fn extract_file_urls(xml: &str) -> Vec<String> {
         buf.clear();
     }
     urls
+}
+
+fn append_xml_ref(out: &mut String, raw: &[u8]) {
+    match raw {
+        b"amp" => out.push('&'),
+        b"lt" => out.push('<'),
+        b"gt" => out.push('>'),
+        b"quot" => out.push('"'),
+        b"apos" => out.push('\''),
+        _ => {
+            out.push('&');
+            out.push_str(&String::from_utf8_lossy(raw));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_file_urls_keeps_signed_query_params_together() {
+        let xml = r#"
+            <ExtendedUpdateInfo>
+              <FileLocation>
+                <Url>http://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/pkg?P1=1&amp;P2=404&amp;P3=2&amp;P4=sig%3d%3d</Url>
+              </FileLocation>
+            </ExtendedUpdateInfo>
+        "#;
+
+        assert_eq!(
+            extract_file_urls(xml),
+            vec![
+                "http://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/pkg?P1=1&P2=404&P3=2&P4=sig%3d%3d"
+                    .to_string()
+            ]
+        );
+    }
 }
