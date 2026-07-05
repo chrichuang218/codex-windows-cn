@@ -1,0 +1,7 @@
+/target
+*.pdb
+/sync_dump.xml
+/frontend/node_modules
+/frontend/dist
+/gen
+/CodexPortable

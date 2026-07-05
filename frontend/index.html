@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex Windows 中文助手</title>
+    <style>
+      html,
+      body,
+      #root {
+        margin: 0;
+        min-height: 100vh;
+        background: #151914;
+      }
+
+      #root {
+        color: #f4f1e8;
+        font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+      }
+
+      .preboot-shell {
+        box-sizing: border-box;
+        display: grid;
+        min-height: 100vh;
+        padding: 30px 34px;
+        background: #151914;
+      }
+
+      .preboot-panel {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        min-height: 0;
+      }
+
+      .preboot-header {
+        display: flex;
+        justify-content: space-between;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.11);
+        padding-bottom: 14px;
+      }
+
+      .preboot-header h1 {
+        margin: 0 0 8px;
+        font-size: 18px;
+      }
+
+      .preboot-header p,
+      .preboot-header span,
+      .preboot-main p,
+      .preboot-main span {
+        margin: 0;
+        color: #9f9d91;
+        font-size: 12px;
+      }
+
+      .preboot-main {
+        display: grid;
+        place-items: center;
+        align-content: center;
+        gap: 16px;
+        min-height: 300px;
+        text-align: center;
+      }
+
+      .preboot-main h2 {
+        margin: 0;
+        font-size: 18px;
+      }
+
+      .preboot-track {
+        width: min(542px, 88vw);
+        height: 10px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .preboot-track div {
+        width: 34%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #d7c87a, #66d1c7);
+        animation: preboot-sweep 1.1s ease-in-out infinite;
+      }
+
+      @keyframes preboot-sweep {
+        0% {
+          margin-left: -36%;
+        }
+
+        100% {
+          margin-left: 102%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <main class="preboot-shell">
+        <section class="preboot-panel">
+          <header class="preboot-header">
+            <div>
+              <h1>Codex Updater</h1>
+              <p>启动中</p>
+            </div>
+            <span>正在加载</span>
+          </header>
+          <section class="preboot-main">
+            <h2>正在加载中文助手</h2>
+            <div class="preboot-track"><div></div></div>
+            <span>准备中</span>
+            <p>正在启动 React 首页。</p>
+          </section>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

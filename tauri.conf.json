@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Codex Windows 中文助手",
+  "version": "0.1.2",
+  "identifier": "io.github.chrichuang218.codex-windows-cn",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "./frontend/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Codex Windows 中文助手",
+        "width": 620,
+        "height": 460,
+        "center": true,
+        "visible": false,
+        "backgroundColor": "#151914",
+        "resizable": false,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all",
+    "icon": ["icons/icon.ico"]
+  }
+}
