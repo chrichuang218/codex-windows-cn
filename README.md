@@ -4,6 +4,18 @@
 
 本项目不是 OpenAI 官方项目，也不是 Codex 应用本体。Codex、OpenAI 及相关标识归其权利方所有。
 
+## 效果图
+
+![Codex Windows 中文助手效果图 1](docs/screenshots/1.png)
+
+![Codex Windows 中文助手效果图 2](docs/screenshots/2.png)
+
+![Codex Windows 中文助手效果图 3](docs/screenshots/3.png)
+
+![Codex Windows 中文助手效果图 4](docs/screenshots/4.png)
+
+![Codex Windows 中文助手效果图 5](docs/screenshots/5.png)
+
 ## 项目边界
 
 - 不修改、不重新分发 Codex 本体。
