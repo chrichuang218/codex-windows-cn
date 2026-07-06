@@ -23,9 +23,11 @@ fn release_workflow_publishes_expected_artifacts_and_trust_text() {
 
     for required in [
         "npm --prefix frontend ci",
-        "cargo tauri build --no-bundle",
+        ".\\scripts\\package-release.ps1",
         "dist/codex-launcher.exe",
         "dist/codex-launcher.exe.sha256",
+        "body_path: release-notes.md",
+        "## 更新内容",
         "gh attestation verify codex-launcher.exe --owner chrichuang218",
         "不是 OpenAI 官方项目",
         "SHA256",
@@ -39,6 +41,9 @@ fn release_workflow_publishes_expected_artifacts_and_trust_text() {
     }
 
     assert!(!release.contains("--owner vaportail"));
+    assert!(!release.contains("generate_release_notes"));
+    assert!(!release.contains("cargo tauri build --no-bundle"));
+    assert!(!release.contains("cargo build --release"));
 }
 
 #[test]
