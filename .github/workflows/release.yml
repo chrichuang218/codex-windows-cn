@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -43,56 +45,77 @@ jobs:
       - name: Frontend build
         run: npm --prefix frontend run build
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2" --locked
-
-      - name: Tauri release build
-        run: cargo tauri build --no-bundle
-
-      - name: Stage artifact
+      - name: Package release
         shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target/release/codex-launcher.exe dist/codex-launcher.exe
-          $hash = (Get-FileHash dist/codex-launcher.exe -Algorithm SHA256).Hash.ToLower()
-          "$hash  codex-launcher.exe" | Out-File -FilePath dist/codex-launcher.exe.sha256 -Encoding ASCII -NoNewline
-          Write-Host "SHA-256: $hash"
+        run: .\scripts\package-release.ps1
 
       - name: Generate build provenance attestation
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/codex-launcher.exe
 
+      - name: Prepare release notes
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $repo = "${{ github.repository }}"
+          $sha = (git rev-list -n 1 $tag).Trim()
+          $previousTag = git tag --sort=-version:refname | Where-Object { $_ -ne $tag } | Select-Object -First 1
+          if ($previousTag) {
+              $changesUrl = "https://github.com/$repo/compare/$previousTag...$tag"
+          } else {
+              $changesUrl = "https://github.com/$repo/commits/$tag"
+          }
+          $checksum = (Get-Content -Path dist/codex-launcher.exe.sha256 -Raw).Trim()
+          $notes = @'
+          # Codex Windows 中文助手 __TAG__
+
+          本发布来自 `chrichuang218/codex-windows-cn`。这是社区开源的中文安装更新助手，不是 OpenAI 官方项目，也不修改、不重新分发 Codex 本体。
+
+          ## 更新内容
+
+          本版本的具体变更会以中文补充到本发布说明。若刚发布后尚未补充，请先查看完整变更。
+
+          ## 下载
+
+          - `codex-launcher.exe`
+          - `codex-launcher.exe.sha256`
+
+          ## SHA256
+
+          ~~~text
+          __CHECKSUM__
+          ~~~
+
+          本地校验：
+
+          ~~~powershell
+          (Get-FileHash .\codex-launcher.exe -Algorithm SHA256).Hash
+          # 与 codex-launcher.exe.sha256 中的 SHA256 值对比
+          ~~~
+
+          ## 构建来源验证
+
+          本 release 由 GitHub Actions 从 tag `__TAG__`（commit `__SHA__`）构建。
+
+          ~~~powershell
+          gh attestation verify codex-launcher.exe --owner chrichuang218
+          ~~~
+
+          校验通过只能证明你拿到的是本仓库对应构建产物，不能表示它是 OpenAI 官方发布物。
+
+          **完整变更**：__CHANGES_URL__
+          '@
+          $notes = $notes.Replace('__TAG__', $tag)
+          $notes = $notes.Replace('__SHA__', $sha)
+          $notes = $notes.Replace('__CHECKSUM__', $checksum)
+          $notes = $notes.Replace('__CHANGES_URL__', $changesUrl)
+          Set-Content -Path release-notes.md -Value $notes -Encoding UTF8
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          generate_release_notes: true
           files: |
             dist/codex-launcher.exe
             dist/codex-launcher.exe.sha256
-          body: |
-            # Codex Windows 中文助手
-
-            本发布来自 `chrichuang218/codex-windows-cn`。这是社区开源的中文安装更新助手，不是 OpenAI 官方项目，也不修改、不重新分发 Codex 本体。
-
-            ## 下载
-
-            - `codex-launcher.exe`
-            - `codex-launcher.exe.sha256`
-
-            ## 校验
-
-            本 release 由 GitHub Actions 从 tag `${{ github.ref_name }}`（commit `${{ github.sha }}`）构建，并发布 SHA256 文件。
-
-            ```powershell
-            (Get-FileHash .\codex-launcher.exe -Algorithm SHA256).Hash
-            # 与 codex-launcher.exe.sha256 中的 SHA256 值对比
-            ```
-
-            构建来源验证：
-
-            ```
-            gh attestation verify codex-launcher.exe --owner chrichuang218
-            ```
-
-            校验通过只能证明你拿到的是本仓库对应构建产物，不能表示它是 OpenAI 官方发布物。
+          body_path: release-notes.md

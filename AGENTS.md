@@ -59,6 +59,8 @@ dist/codex-launcher.exe.sha256
 
 GitHub Release 上传这两个文件即可。
 
+GitHub Release 发布说明必须使用中文，至少包含更新内容、验证或校验方式、下载文件、SHA256 和完整变更链接。不要依赖 GitHub 自动生成的英文 release notes 作为最终发布日志。
+
 ## 版本号
 
 发布新版时同步更新：
