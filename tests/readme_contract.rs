@@ -43,3 +43,24 @@ fn readme_does_not_keep_old_slint_attribution() {
         );
     }
 }
+
+#[test]
+fn package_metadata_stays_within_v1_product_boundary() {
+    let manifest = std::fs::read_to_string("Cargo.toml").expect("Cargo.toml should exist");
+
+    assert!(manifest.contains("Codex Windows Chinese installer"));
+    assert!(
+        !manifest.contains("repair assistant"),
+        "package metadata should not advertise deferred repair features"
+    );
+}
+
+#[test]
+fn windows_integration_metadata_uses_this_project_identity() {
+    let installer = std::fs::read_to_string("src/installer.rs").expect("installer source exists");
+
+    assert!(installer.contains("Codex Windows 中文助手"));
+    assert!(installer.contains("publisher: \"chrichuang218\""));
+    assert!(!installer.contains("Codex (unofficial updater)"));
+    assert!(!installer.contains("publisher: \"vaportail\""));
+}

@@ -24,6 +24,7 @@ const DISPLAYCATALOG_BASE: &str = "https://displaycatalog.mp.microsoft.com/v7.0/
 const FE3_URL: &str = "https://fe3.delivery.mp.microsoft.com/ClientWebService/client.asmx";
 const FE3_SECURED_URL: &str =
     "https://fe3.delivery.mp.microsoft.com/ClientWebService/client.asmx/secured";
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 const GET_COOKIE_TEMPLATE: &str = include_str!("templates/GetCookie.xml");
 const SYNC_UPDATES_TEMPLATE: &str = include_str!("templates/WUIDRequest.xml");
@@ -149,6 +150,7 @@ fn metadata_http_client() -> Result<Client> {
 fn download_http_client() -> Result<Client> {
     Ok(Client::builder()
         .connect_timeout(Duration::from_secs(15))
+        .timeout(DOWNLOAD_TIMEOUT)
         .user_agent("Windows-Update-Agent/10.0.10011.16384 Client-Protocol/1.40")
         .build()?)
 }
@@ -500,6 +502,17 @@ mod tests {
                 "http://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/pkg?P1=1&P2=404&P3=2&P4=sig%3d%3d"
                     .to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn direct_download_has_a_bounded_timeout_that_still_allows_slow_large_downloads() {
+        assert_eq!(DOWNLOAD_TIMEOUT, Duration::from_secs(30 * 60));
+        assert!(
+            include_str!("direct.rs")
+                .matches(".timeout(DOWNLOAD_TIMEOUT)")
+                .count()
+                >= 2
         );
     }
 }

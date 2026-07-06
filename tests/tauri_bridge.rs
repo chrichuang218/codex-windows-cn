@@ -17,3 +17,14 @@ fn app_status_describes_the_v1_chinese_install_update_assistant() {
         ]
     );
 }
+
+#[test]
+fn native_splash_uses_the_chinese_product_name() {
+    let splash = std::fs::read_to_string("src/splash.rs").expect("splash source should exist");
+
+    assert!(splash.contains("\"Codex Windows 中文助手\""));
+    assert!(
+        !splash.contains("\"Codex Updater\""),
+        "native splash should not show the old reference product name"
+    );
+}

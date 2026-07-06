@@ -3,10 +3,10 @@
 use codex_windows_cn::{
     bridge::{
         self, AppStatus, InstallEvent, InstallRequest, InstallStart, InstallerDefaults,
-        LauncherUpdateAction, LauncherUpdateActionResult, LauncherUpdateStart,
-        LauncherUpdateStatus, ProxyLaunchResult, ProxyLaunchStatus, UninstallConfirmation,
-        UninstallEvent, UninstallStart, UninstallStatus, UpdateAction, UpdateActionResult,
-        UpdateStart, UpdateStatus,
+        LaunchInstalledRequest, LauncherUpdateAction, LauncherUpdateActionResult,
+        LauncherUpdateStart, LauncherUpdateStatus, ProxyLaunchResult, ProxyLaunchStatus,
+        UninstallConfirmation, UninstallEvent, UninstallStart, UninstallStatus, UpdateAction,
+        UpdateActionResult, UpdateStart, UpdateStatus,
     },
     config::Config,
     installer, launcher_update, mode, proxy, uninstall, updater,
@@ -135,7 +135,27 @@ fn proxy_launch_status() -> Result<ProxyLaunchStatus, String> {
 #[tauri::command]
 fn launch_codex() -> Result<ProxyLaunchResult, String> {
     let (root, cfg) = proxy_context()?;
-    proxy::launch(&root, &cfg, &[]).map_err(|cause| format!("启动 Codex 失败：{cause:#}"))?;
+    proxy::launch(&root, cfg.use_current_junction, &[])
+        .map_err(|cause| format!("启动 Codex 失败：{cause:#}"))?;
+    Ok(ProxyLaunchResult {
+        launched: true,
+        message: "已启动 Codex".into(),
+    })
+}
+
+#[tauri::command]
+fn launch_installed_codex(request: LaunchInstalledRequest) -> Result<ProxyLaunchResult, String> {
+    let root = request.root.trim();
+    if root.is_empty() {
+        return Err("请选择安装位置".into());
+    }
+
+    proxy::launch(
+        std::path::Path::new(root),
+        request.use_current_junction,
+        &[],
+    )
+    .map_err(|cause| format!("启动 Codex 失败：{cause:#}"))?;
     Ok(ProxyLaunchResult {
         launched: true,
         message: "已启动 Codex".into(),
@@ -384,6 +404,7 @@ fn main() {
             install_status,
             proxy_launch_status,
             launch_codex,
+            launch_installed_codex,
             check_update_status,
             apply_update_action,
             start_update,

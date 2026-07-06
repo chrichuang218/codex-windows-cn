@@ -121,6 +121,13 @@ pub struct ProxyLaunchResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchInstalledRequest {
+    pub root: String,
+    pub use_current_junction: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateStatus {

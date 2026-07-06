@@ -390,7 +390,7 @@ unsafe fn paint_content(hdc: HDC, scale: f32) {
     SetTextColor(hdc, COLORREF(COLOR_TEXT));
     draw_text(
         hdc,
-        "Codex Updater",
+        "Codex Windows 中文助手",
         scaled(34),
         scaled(62),
         w - scaled(34),

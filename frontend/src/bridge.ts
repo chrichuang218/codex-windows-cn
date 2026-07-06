@@ -72,6 +72,11 @@ export type ProxyLaunchResult = {
   message: string;
 };
 
+export type LaunchInstalledRequest = {
+  root: string;
+  useCurrentJunction: boolean;
+};
+
 export type UpdateStatusKind = "upToDate" | "available" | "skipped" | "error";
 export type UpdateAction =
   | "updateNow"
@@ -180,6 +185,7 @@ export type AppBridge = {
   onInstallEvent: (handler: (event: InstallEvent) => void) => () => void;
   getProxyLaunchStatus: () => Promise<ProxyLaunchStatus>;
   launchCodex: () => Promise<ProxyLaunchResult>;
+  launchInstalledCodex: (request: LaunchInstalledRequest) => Promise<ProxyLaunchResult>;
   checkUpdateStatus: () => Promise<UpdateStatus>;
   startUpdate: () => Promise<UpdateStart>;
   getUpdateStatus: () => Promise<UpdateEvent | null>;
@@ -360,6 +366,13 @@ export const tauriBridge: AppBridge = {
     }
 
     return invoke<ProxyLaunchResult>("launch_codex");
+  },
+  launchInstalledCodex: (request) => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve({ launched: true, message: "已启动 Codex" });
+    }
+
+    return invoke<ProxyLaunchResult>("launch_installed_codex", { request });
   },
   checkUpdateStatus: () => {
     if (!("__TAURI_INTERNALS__" in window)) {

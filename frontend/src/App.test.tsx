@@ -6,6 +6,7 @@ import type {
   AppStatus,
   InstallEvent,
   InstallerDefaults,
+  LaunchInstalledRequest,
   LauncherUpdateEvent,
   UninstallEvent,
   UpdateEvent
@@ -104,11 +105,12 @@ afterEach(() => {
 });
 
 describe("Codex Windows 中文助手 shell", () => {
-  test("first launch presents a single-window Codex Updater shell", async () => {
+  test("first launch presents a single-window Chinese assistant shell", async () => {
     render(<App bridge={makeBridge({ installed: false })} />);
 
     expect(await screen.findByRole("heading", { name: "欢迎使用 Codex 安装助手" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Codex Updater" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Codex Windows 中文助手" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Codex Updater" })).toBeNull();
     expect(screen.getByLabelText("当前页面")).toHaveTextContent("欢迎");
     expect(screen.queryByText("安装 · 更新 · 启动")).toBeNull();
     expect(screen.queryByText("五条主路径")).toBeNull();
@@ -145,6 +147,16 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(screen.queryByRole("heading", { name: "Codex 已就绪" })).toBeNull();
     expect(screen.queryByText("确认卸载 Codex Windows 中文助手")).toBeNull();
     expect(screen.queryByText("发现启动器新版本")).toBeNull();
+  });
+
+  test("first launch does not route unavailable update or launch actions into dead ends", async () => {
+    render(<App bridge={makeBridge({ installed: false })} />);
+
+    expect(await screen.findByRole("heading", { name: "欢迎使用 Codex 安装助手" })).toBeVisible();
+
+    expect(screen.getByRole("button", { name: "安装" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "更新" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "启动" })).toBeDisabled();
   });
 
   test("walks the installer screens and starts installation with selected options", async () => {
@@ -235,6 +247,55 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(await screen.findByText("Codex 已安装")).toBeVisible();
     expect(screen.getByText("版本 1.2.0")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "安装进度" })).toBeNull();
+  });
+
+  test("launches from the just-installed root after installation completes", async () => {
+    let launchedFrom: LaunchInstalledRequest | null = null;
+    let emitInstallEvent: ((event: InstallEvent) => void) | null = null;
+    const bridge = makeBridge({
+      installed: false,
+      launchInstalledCodex: async (request) => {
+        launchedFrom = request;
+        return { launched: true, message: "已启动 Codex" };
+      },
+      launchCodex: async () => {
+        throw new Error("should launch from the installed root");
+      },
+      onInstallEvent: (handler) => {
+        emitInstallEvent = handler;
+        return () => {};
+      }
+    });
+
+    render(<App bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("button", { name: "下一步" }));
+    fireEvent.click(await screen.findByRole("button", { name: /便携模式/ }));
+    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    expect(await screen.findByRole("heading", { name: "安装位置" })).toBeVisible();
+    fireEvent.change(screen.getByDisplayValue("D:\\Tools\\CodexPortable"), {
+      target: { value: "D:\\Apps\\CodexPortable" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    fireEvent.click(await screen.findByRole("button", { name: "安装" }));
+
+    act(() => {
+      emitInstallEvent?.({
+        kind: "done",
+        title: "安装完成",
+        detail: "",
+        progress: 1,
+        version: "1.2.0",
+        message: null
+      });
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "启动 Codex" }));
+
+    expect(await screen.findByText("已启动 Codex")).toBeVisible();
+    expect(launchedFrom).toEqual({
+      root: "D:\\Apps\\CodexPortable",
+      useCurrentJunction: true
+    });
   });
 
   test("polls install status when install events are not delivered", async () => {
@@ -390,7 +451,7 @@ describe("Codex Windows 中文助手 shell", () => {
     render(<App bridge={bridge} />);
 
     expect(await screen.findByRole("heading", { name: "发现 Codex 新版本" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Codex Updater" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Codex Windows 中文助手" })).toBeVisible();
     expect(screen.getByLabelText("当前页面")).toHaveTextContent("有可用更新");
     expect(screen.queryByRole("heading", { name: "Codex 工作台" })).toBeNull();
     expect(screen.queryByText(/versions\\1.2.0\\Codex.exe/)).toBeNull();
@@ -819,6 +880,7 @@ function makeBridge(
             message: "尚未完成安装"
           },
     launchCodex: async () => ({ launched: true, message: "已启动 Codex" }),
+    launchInstalledCodex: async () => ({ launched: true, message: "已启动 Codex" }),
     checkUpdateStatus: async () => updateStatus,
     startUpdate: async () => ({ accepted: true }),
     getUpdateStatus: async () => null,

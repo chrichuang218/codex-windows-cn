@@ -414,16 +414,16 @@ fn write_shortcut(root: &Path, mode: InstallMode, _version: &str) -> Result<()> 
     };
     let target = root.join("codex-launcher.exe");
     let icon = target.clone();
-    shortcut::create_or_update(&link, &target, &icon, "Codex (unofficial updater)", root)
+    shortcut::create_or_update(&link, &target, &icon, "Codex Windows 中文助手", root)
 }
 
 /// (Re)write the Add/Remove Programs registry entry for the current install.
 fn write_registry(root: &Path, mode: InstallMode, version: &str) -> Result<()> {
     let launcher = root.join("codex-launcher.exe");
     let entry = registry::UninstallEntry {
-        display_name: "Codex (unofficial updater)",
+        display_name: "Codex Windows 中文助手",
         display_version: version,
-        publisher: "vaportail",
+        publisher: "chrichuang218",
         install_location: root,
         uninstall_string: format!("\"{}\" --uninstall", launcher.display()),
         display_icon: &launcher,

@@ -501,6 +501,26 @@ export function useAppController(bridge: AppBridge) {
     }
   };
 
+  const launchInstalledCodex = async () => {
+    if (!installForm) {
+      return;
+    }
+
+    setLaunchState("launching");
+    setLaunchMessage(null);
+    try {
+      const result = await bridge.launchInstalledCodex({
+        root: installForm.root,
+        useCurrentJunction: installForm.useCurrentJunction
+      });
+      setLaunchMessage(result.message);
+    } catch (cause) {
+      setLaunchMessage(cause instanceof Error ? cause.message : "启动 Codex 失败");
+    } finally {
+      setLaunchState("idle");
+    }
+  };
+
   const startUpdate = async () => {
     setUpdateState("running");
     setUpdateEvent({
@@ -605,6 +625,7 @@ export function useAppController(bridge: AppBridge) {
     installerStep,
     latestVersion,
     launchCodex,
+    launchInstalledCodex,
     launcherUpdateEvent,
     launcherUpdateMessage,
     launcherUpdateProgress: toPercent(launcherUpdateEvent?.progress),

@@ -16,6 +16,7 @@ export function ProductShell({
   children,
   footer,
   modeLabel,
+  productName,
   stageLabel,
   title
 }: ProductShellProps) {
@@ -25,7 +26,7 @@ export function ProductShell({
         <section className="window-surface">
           <header className="window-header">
             <div>
-              <h1>Codex Updater</h1>
+              <h1>{productName}</h1>
               <p>{modeLabel || title}</p>
             </div>
             <span aria-label="当前页面">{stageLabel}</span>

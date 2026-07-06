@@ -21,9 +21,11 @@ export function InstallerWizard({ controller }: { controller: ReadyAppController
     installerStep,
     installState,
     launchCodex,
+    launchInstalledCodex,
     launchMessage,
     launchState,
     patchInstallForm,
+    proxyStatus,
     setForcedWorkspace,
     setInstallerStep,
     setWorkspacePanel,
@@ -52,6 +54,7 @@ export function InstallerWizard({ controller }: { controller: ReadyAppController
               安装
             </button>
             <button
+              disabled={!proxyStatus.managedInstall}
               onClick={() => {
                 setWorkspacePanel("home");
                 setForcedWorkspace(true);
@@ -60,7 +63,11 @@ export function InstallerWizard({ controller }: { controller: ReadyAppController
             >
               更新
             </button>
-            <button disabled={launchState !== "idle"} onClick={launchCodex} type="button">
+            <button
+              disabled={!proxyStatus.canLaunch || launchState !== "idle"}
+              onClick={launchCodex}
+              type="button"
+            >
               {launchState === "idle" ? "启动" : "启动中"}
             </button>
           </div>
@@ -179,6 +186,7 @@ export function InstallerWizard({ controller }: { controller: ReadyAppController
           <p className="success-text">Codex 已安装</p>
           {installEvent?.version ? <p className="muted">版本 {installEvent.version}</p> : null}
           <code>{installForm.root}</code>
+          {launchMessage ? <span className="inline-status">{launchMessage}</span> : null}
         </section>
       ) : null}
 
@@ -201,7 +209,8 @@ function InstallerFooter({ controller }: { controller: ReadyAppController }) {
     installForm,
     installerStep,
     installState,
-    launchCodex,
+    launchInstalledCodex,
+    launchState,
     setInstallerStep,
     startInstall
   } = controller;
@@ -286,8 +295,13 @@ function InstallerFooter({ controller }: { controller: ReadyAppController }) {
     return (
       <>
         <span />
-        <button className="primary-button" onClick={launchCodex} type="button">
-          启动 Codex
+        <button
+          className="primary-button"
+          disabled={launchState !== "idle"}
+          onClick={launchInstalledCodex}
+          type="button"
+        >
+          {launchState === "idle" ? "启动 Codex" : "启动中"}
         </button>
       </>
     );

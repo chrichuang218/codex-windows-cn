@@ -7,7 +7,6 @@
 //! install is currently the lock holder (their window will get focused
 //! instead of ours).
 
-use crate::config::Config;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
@@ -118,8 +117,8 @@ pub fn find_singleton_holder(_user_data_dir: &Path) -> Option<SingletonHolder> {
 /// singleton; if a *foreign* install holds it, we MessageBox the user so
 /// they understand why their click may surface that other install's window
 /// instead of ours.
-pub fn launch(root: &Path, cfg: &Config, forward_args: &[String]) -> Result<()> {
-    let exe = resolve_codex_exe(root, cfg.use_current_junction)
+pub fn launch(root: &Path, use_current_junction: bool, forward_args: &[String]) -> Result<()> {
+    let exe = resolve_codex_exe(root, use_current_junction)
         .ok_or_else(|| anyhow::anyhow!("no installed Codex.exe found under {}", root.display()))?;
 
     if let Some(udd) = codex_user_data_dir() {
