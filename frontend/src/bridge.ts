@@ -195,6 +195,7 @@ export type AppBridge = {
   onUninstallEvent: (handler: (event: UninstallEvent) => void) => () => void;
   checkLauncherUpdateStatus: () => Promise<LauncherUpdateStatus>;
   startLauncherUpdate: (latestVersion: string) => Promise<LauncherUpdateStart>;
+  getLauncherUpdateProgress: () => Promise<LauncherUpdateEvent | null>;
   applyLauncherUpdateAction: (
     action: LauncherUpdateAction,
     latestVersion: string
@@ -471,6 +472,13 @@ export const tauriBridge: AppBridge = {
     }
 
     return invoke<LauncherUpdateStart>("start_launcher_update", { latestVersion });
+  },
+  getLauncherUpdateProgress: () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve(null);
+    }
+
+    return invoke<LauncherUpdateEvent | null>("launcher_update_progress");
   },
   applyLauncherUpdateAction: (action, latestVersion) => {
     if (!("__TAURI_INTERNALS__" in window)) {

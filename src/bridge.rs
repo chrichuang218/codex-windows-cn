@@ -405,8 +405,8 @@ pub fn launcher_update_status_from_decision(decision: LauncherDecision) -> Launc
         },
         LauncherDecision::Error(message) => LauncherUpdateStatus {
             kind: LauncherUpdateStatusKind::Error,
-            title: "检查启动器更新失败".into(),
-            message,
+            title: launcher_error_title(&message).into(),
+            message: launcher_error_message(&message),
             current_version: None,
             latest_version: None,
             release_url: None,
@@ -812,6 +812,25 @@ fn launcher_update_phase_title(phase: &str) -> &'static str {
         "Installing" => "正在替换启动器",
         _ => "正在自更新",
     }
+}
+
+fn launcher_error_title(message: &str) -> &'static str {
+    if is_github_rate_limit_error(message) {
+        return "检查启动器更新受限";
+    }
+    "检查启动器更新失败"
+}
+
+fn launcher_error_message(message: &str) -> String {
+    if is_github_rate_limit_error(message) {
+        return "GitHub 暂时限制了未登录接口请求，稍后会自动重试。".into();
+    }
+    message.into()
+}
+
+fn is_github_rate_limit_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("403") && lower.contains("rate limit")
 }
 
 fn uninstall_phase_title(phase: &str) -> &'static str {

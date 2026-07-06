@@ -31,6 +31,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 static INSTALL_EVENT: OnceLock<Mutex<Option<InstallEvent>>> = OnceLock::new();
 static INSTALL_CANCEL: OnceLock<Mutex<Option<Arc<AtomicBool>>>> = OnceLock::new();
 static UPDATE_EVENT: OnceLock<Mutex<Option<bridge::UpdateEvent>>> = OnceLock::new();
+static LAUNCHER_UPDATE_EVENT: OnceLock<Mutex<Option<bridge::LauncherUpdateEvent>>> =
+    OnceLock::new();
 static UNINSTALL_EVENT: OnceLock<Mutex<Option<UninstallEvent>>> = OnceLock::new();
 
 #[cfg(windows)]
@@ -55,6 +57,10 @@ fn install_cancel_state() -> &'static Mutex<Option<Arc<AtomicBool>>> {
 
 fn update_event_state() -> &'static Mutex<Option<bridge::UpdateEvent>> {
     UPDATE_EVENT.get_or_init(|| Mutex::new(None))
+}
+
+fn launcher_update_event_state() -> &'static Mutex<Option<bridge::LauncherUpdateEvent>> {
+    LAUNCHER_UPDATE_EVENT.get_or_init(|| Mutex::new(None))
 }
 
 fn uninstall_event_state() -> &'static Mutex<Option<UninstallEvent>> {
@@ -188,9 +194,26 @@ fn update_status() -> Option<bridge::UpdateEvent> {
 
 #[tauri::command]
 fn check_launcher_update_status() -> Result<LauncherUpdateStatus, String> {
-    Ok(bridge::launcher_update_status_from_decision(
-        updater::check_launcher_now(),
-    ))
+    let Ok((root, mut cfg)) = proxy_context() else {
+        return Ok(bridge::launcher_update_status_from_decision(
+            updater::LauncherDecision::Skipped {
+                reason: "尚未完成安装".into(),
+            },
+        ));
+    };
+
+    if let Some(decision) = updater::pending_launcher_from_state(&cfg) {
+        return Ok(bridge::launcher_update_status_from_decision(decision));
+    }
+
+    let will_query = updater::launcher_auto_check_will_query(&cfg);
+    let decision = updater::check_launcher_auto(&cfg);
+    if will_query {
+        updater::record_launcher_check(&mut cfg, &decision);
+        let _ = cfg.save_runtime(&root);
+    }
+
+    Ok(bridge::launcher_update_status_from_decision(decision))
 }
 
 #[tauri::command]
@@ -218,16 +241,29 @@ fn start_launcher_update(
         return Err("缺少启动器目标版本".into());
     }
 
+    if let Ok(mut current) = launcher_update_event_state().lock() {
+        *current = None;
+    }
+
     std::thread::spawn(move || {
         launcher_update::apply(&latest_version, move |msg| {
-            let _ = app.emit(
-                "launcher-update://event",
-                bridge::launcher_update_event_from_msg(msg),
-            );
+            let event = bridge::launcher_update_event_from_msg(msg);
+            if let Ok(mut current) = launcher_update_event_state().lock() {
+                *current = Some(event.clone());
+            }
+            let _ = app.emit("launcher-update://event", event);
         });
     });
 
     Ok(LauncherUpdateStart { accepted: true })
+}
+
+#[tauri::command]
+fn launcher_update_progress() -> Option<bridge::LauncherUpdateEvent> {
+    launcher_update_event_state()
+        .lock()
+        .ok()
+        .and_then(|current| current.clone())
 }
 
 #[tauri::command]
@@ -355,6 +391,7 @@ fn main() {
             check_launcher_update_status,
             apply_launcher_update_action,
             start_launcher_update,
+            launcher_update_progress,
             uninstall_confirmation,
             uninstall_status,
             uninstall_progress,

@@ -22,6 +22,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Owner/repo for the launcher's own GitHub releases. Tweak here if the
 /// project ever moves.
 pub const LAUNCHER_REPO: &str = "chrichuang218/codex-windows-cn";
+pub const LAUNCHER_LATEST_RELEASE_URL: &str =
+    "https://github.com/chrichuang218/codex-windows-cn/releases/latest";
 pub const LAUNCHER_LATEST_API: &str =
     "https://api.github.com/repos/chrichuang218/codex-windows-cn/releases/latest";
 
@@ -248,15 +250,51 @@ pub fn check_launcher_now() -> LauncherDecision {
 }
 
 fn fetch_latest_launcher_tag() -> anyhow::Result<String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .user_agent(concat!("codex-windows-updater/", env!("CARGO_PKG_VERSION")))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+
+    fetch_latest_launcher_tag_from_redirect(&client).or_else(|redirect_error| {
+        fetch_latest_launcher_tag_from_api(&client).map_err(|api_error| {
+            anyhow::anyhow!(
+                "GitHub release redirect check failed: {redirect_error:#}; \
+                 GitHub API check failed: {api_error:#}"
+            )
+        })
+    })
+}
+
+fn fetch_latest_launcher_tag_from_redirect(
+    client: &reqwest::blocking::Client,
+) -> anyhow::Result<String> {
+    let resp = client.get(LAUNCHER_LATEST_RELEASE_URL).send()?;
+    if !resp.status().is_redirection() {
+        anyhow::bail!(
+            "expected release redirect from {LAUNCHER_LATEST_RELEASE_URL}, got {}",
+            resp.status()
+        );
+    }
+
+    let location = resp
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .ok_or_else(|| anyhow::anyhow!("release redirect missing Location header"))?
+        .to_str()?;
+
+    tag_from_latest_release_location(location)
+        .ok_or_else(|| anyhow::anyhow!("release redirect Location has no tag: {location}"))
+}
+
+fn fetch_latest_launcher_tag_from_api(
+    client: &reqwest::blocking::Client,
+) -> anyhow::Result<String> {
     use serde::Deserialize;
     #[derive(Deserialize)]
     struct LatestRelease {
         tag_name: String,
     }
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .user_agent(concat!("codex-windows-updater/", env!("CARGO_PKG_VERSION")))
-        .build()?;
     let resp = client
         .get(LAUNCHER_LATEST_API)
         .header("Accept", "application/vnd.github+json")
@@ -264,6 +302,18 @@ fn fetch_latest_launcher_tag() -> anyhow::Result<String> {
         .error_for_status()?;
     let body: LatestRelease = resp.json()?;
     Ok(body.tag_name)
+}
+
+fn tag_from_latest_release_location(location: &str) -> Option<String> {
+    let without_fragment = location.split('#').next()?;
+    let without_query = without_fragment.split('?').next()?;
+    let marker = "/releases/tag/";
+    let start = without_query.find(marker)? + marker.len();
+    let tag = without_query[start..].split('/').next()?.trim();
+    if tag.is_empty() {
+        return None;
+    }
+    Some(tag.to_string())
 }
 
 /// Apply a launcher defer choice. Caller persists.
@@ -290,6 +340,22 @@ pub fn apply_launcher_defer(cfg: &mut Config, choice: LauncherDeferChoice, lates
         LauncherDeferChoice::Never => {
             cfg.launcher_suppress_until_unix = Some(u64::MAX);
         }
+    }
+}
+
+/// Record that the launcher update check ran. Successful checks also refresh
+/// the latest launcher version cache; errors only advance the cooldown so a
+/// transient GitHub limit does not get hammered on every app launch.
+pub fn record_launcher_check(cfg: &mut Config, decision: &LauncherDecision) {
+    cfg.last_check_unix = Some(now_unix());
+    match decision {
+        LauncherDecision::Available { latest, .. } => {
+            cfg.known_latest_launcher = Some(latest.clone());
+        }
+        LauncherDecision::UpToDate { version } => {
+            cfg.known_latest_launcher = Some(version.clone());
+        }
+        LauncherDecision::Skipped { .. } | LauncherDecision::Error(_) => {}
     }
 }
 
@@ -372,5 +438,24 @@ mod tests {
         assert!(!version_gt("26.422.2437.0", "26.422.2437.0"));
         assert!(!version_gt("26.100.0.0", "26.422.0.0"));
         assert!(version_gt("27.0.0.0", "26.999.999.999"));
+    }
+
+    #[test]
+    fn latest_release_redirect_location_yields_tag() {
+        assert_eq!(
+            tag_from_latest_release_location(
+                "https://github.com/chrichuang218/codex-windows-cn/releases/tag/v0.2.0"
+            )
+            .as_deref(),
+            Some("v0.2.0")
+        );
+        assert_eq!(
+            tag_from_latest_release_location(
+                "/chrichuang218/codex-windows-cn/releases/tag/v0.2.1?expanded=true"
+            )
+            .as_deref(),
+            Some("v0.2.1")
+        );
+        assert_eq!(tag_from_latest_release_location("/releases/latest"), None);
     }
 }

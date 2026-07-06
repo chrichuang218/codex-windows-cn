@@ -739,6 +739,35 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(screen.getByText("启动器已更新，重启后生效")).toBeVisible();
   });
 
+  test("polls launcher self-update progress when launcher events are not delivered", async () => {
+    let polls = 0;
+    const bridge = makeBridge({
+      installed: true,
+      onLauncherUpdateEvent: () => () => {},
+      getLauncherUpdateProgress: async () => {
+        polls++;
+        return polls < 2
+          ? null
+          : {
+              kind: "progress",
+              title: "正在下载启动器",
+              detail: "512 / 1024 KB",
+              progress: 0.5,
+              message: null
+            };
+      }
+    });
+
+    render(<App bridge={bridge} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "启动器更新" }));
+    fireEvent.click(await screen.findByRole("button", { name: "应用更新" }));
+
+    expect(await screen.findByRole("heading", { name: "正在下载启动器" })).toBeVisible();
+    expect(screen.getByText("512 / 1024 KB")).toBeVisible();
+    expect(screen.getByText("50%")).toBeVisible();
+  });
+
   test("secondary maintenance screens return to the installed home without leaking content", async () => {
     render(<App bridge={makeBridge({ installed: true })} />);
 
@@ -802,6 +831,7 @@ function makeBridge(
     onUninstallEvent: () => () => {},
     checkLauncherUpdateStatus: async () => launcherUpdateStatus,
     startLauncherUpdate: async () => ({ accepted: true }),
+    getLauncherUpdateProgress: async () => null,
     applyLauncherUpdateAction: async () => ({
       applied: true,
       message: "已保存自更新提醒设置"

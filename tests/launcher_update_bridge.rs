@@ -6,11 +6,17 @@ use codex_windows_cn::bridge::{
 use codex_windows_cn::config::{Config, InstallMode, UpdatePolicy};
 use codex_windows_cn::launcher_update::LauncherUpdateMsg;
 use codex_windows_cn::store::Fetcher;
-use codex_windows_cn::updater::{LauncherDecision, LAUNCHER_LATEST_API, LAUNCHER_REPO};
+use codex_windows_cn::updater::{
+    LauncherDecision, LAUNCHER_LATEST_API, LAUNCHER_LATEST_RELEASE_URL, LAUNCHER_REPO,
+};
 
 #[test]
 fn launcher_release_source_uses_this_project_repository() {
     assert_eq!(LAUNCHER_REPO, "chrichuang218/codex-windows-cn");
+    assert_eq!(
+        LAUNCHER_LATEST_RELEASE_URL,
+        "https://github.com/chrichuang218/codex-windows-cn/releases/latest"
+    );
     assert_eq!(
         LAUNCHER_LATEST_API,
         "https://api.github.com/repos/chrichuang218/codex-windows-cn/releases/latest"
@@ -46,6 +52,21 @@ fn launcher_update_available_decision_becomes_chinese_status_with_actions() {
             LauncherUpdateAction::Never,
         ]
     );
+}
+
+#[test]
+fn launcher_rate_limit_error_becomes_short_chinese_status() {
+    let status = launcher_update_status_from_decision(LauncherDecision::Error(
+        "HTTP status client error (403 rate limit exceeded) for url (https://api.github.com/repos/chrichuang218/codex-windows-cn/releases/latest)".into(),
+    ));
+
+    assert_eq!(status.kind, LauncherUpdateStatusKind::Error);
+    assert_eq!(status.title, "检查启动器更新受限");
+    assert_eq!(
+        status.message,
+        "GitHub 暂时限制了未登录接口请求，稍后会自动重试。"
+    );
+    assert_eq!(status.actions, Vec::<LauncherUpdateAction>::new());
 }
 
 #[test]

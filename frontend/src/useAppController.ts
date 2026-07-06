@@ -99,6 +99,23 @@ function cachedUpdateStatusFromProxy(
   };
 }
 
+function mergeProgressEvent<
+  T extends { kind: string; title: string; detail: string; progress: number | null }
+>(
+  current: T | null,
+  event: T
+): T {
+  if (event.kind !== "progress" || event.detail.trim() !== "" || !current) {
+    return event;
+  }
+
+  return {
+    ...event,
+    title: current.title,
+    detail: current.detail
+  };
+}
+
 export function useAppController(bridge: AppBridge) {
   const [status, setStatus] = useState<LoadedAppData["status"] | null>(null);
   const [installerDefaults, setInstallerDefaults] =
@@ -273,7 +290,13 @@ export function useAppController(bridge: AppBridge) {
   }, [bridge, installerStep, installState]);
 
   useEffect(() => bridge.onUpdateEvent(setUpdateEvent), [bridge]);
-  useEffect(() => bridge.onLauncherUpdateEvent(setLauncherUpdateEvent), [bridge]);
+  useEffect(
+    () =>
+      bridge.onLauncherUpdateEvent((event) => {
+        setLauncherUpdateEvent((current) => mergeProgressEvent(current, event));
+      }),
+    [bridge]
+  );
   useEffect(() => bridge.onUninstallEvent(setUninstallEvent), [bridge]);
 
   useEffect(() => {
@@ -327,6 +350,32 @@ export function useAppController(bridge: AppBridge) {
       window.clearInterval(timer);
     };
   }, [bridge, updateState]);
+
+  useEffect(() => {
+    if (launcherUpdateState !== "running") {
+      return;
+    }
+
+    let alive = true;
+    const poll = () => {
+      bridge
+        .getLauncherUpdateProgress()
+        .then((event) => {
+          if (alive && event) {
+            setLauncherUpdateEvent((current) => mergeProgressEvent(current, event));
+          }
+        })
+        .catch(() => {});
+    };
+
+    poll();
+    const timer = window.setInterval(poll, 500);
+
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [bridge, launcherUpdateState]);
 
   useEffect(() => {
     if (installEvent?.kind === "done") {
@@ -489,7 +538,13 @@ export function useAppController(bridge: AppBridge) {
 
   const startLauncherUpdate = async () => {
     setLauncherUpdateState("running");
-    setLauncherUpdateEvent(null);
+    setLauncherUpdateEvent({
+      kind: "phase",
+      title: "正在准备自更新",
+      detail: "正在启动自更新任务。",
+      progress: null,
+      message: null
+    });
     setLauncherUpdateMessage(null);
     try {
       await bridge.startLauncherUpdate(launcherUpdateStatus?.latestVersion ?? "");
