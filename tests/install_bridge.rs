@@ -42,7 +42,8 @@ fn installer_defaults_offer_a_recommended_user_install_path() {
     assert!(user_mode.default_root.ends_with(r"\Codex"));
     assert!(user_mode.create_shortcut);
     assert!(user_mode.register_uninstall);
-    assert_eq!(user_mode.keep_versions, 2);
+    assert_eq!(user_mode.keep_versions, 5);
+    assert!(!user_mode.keep_all_versions);
     assert!(user_mode.use_current_junction);
 
     let portable_mode = defaults
@@ -63,6 +64,7 @@ fn install_request_builds_installer_options_without_touching_disk() {
         create_shortcut: true,
         register_uninstall: true,
         keep_versions: 2,
+        keep_all_versions: false,
         fetcher: BridgeFetcher::Direct,
         use_current_junction: true,
         local_msix: None,
@@ -101,6 +103,16 @@ fn install_worker_messages_are_reported_as_chinese_events() {
             message: None,
         }
     );
+}
+
+#[test]
+fn install_done_does_not_assume_the_downloaded_product_name() {
+    let event = install_event_from_msg(InstallMsg::Done {
+        version: "26.707.3748.0".into(),
+    });
+
+    assert_eq!(event.title, "安装完成");
+    assert_eq!(event.detail, "已安装官方桌面应用 26.707.3748.0");
 }
 
 #[test]

@@ -3,13 +3,14 @@
 use codex_windows_cn::{
     bridge::{
         self, AppStatus, InstallEvent, InstallRequest, InstallStart, InstallerDefaults,
-        LaunchInstalledRequest, LauncherUpdateAction, LauncherUpdateActionResult,
+        LaunchInstalledRequest, LaunchRequest, LauncherUpdateAction, LauncherUpdateActionResult,
         LauncherUpdateStart, LauncherUpdateStatus, ProxyLaunchResult, ProxyLaunchStatus,
-        UninstallConfirmation, UninstallEvent, UninstallStart, UninstallStatus, UpdateAction,
-        UpdateActionResult, UpdateStart, UpdateStatus,
+        RetentionSettingsRequest, UninstallConfirmation, UninstallEvent, UninstallStart,
+        UninstallStatus, UpdateAction, UpdateActionResult, UpdateStart, UpdateStatus,
+        VersionActionResult, VersionInventory,
     },
-    config::Config,
-    installer, launcher_update, mode, proxy, uninstall, updater,
+    config::{Config, InstallMode},
+    elevate, installer, launcher_update, mode, proxy, uninstall, updater, versions,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -133,14 +134,21 @@ fn proxy_launch_status() -> Result<ProxyLaunchStatus, String> {
 }
 
 #[tauri::command]
-fn launch_codex() -> Result<ProxyLaunchResult, String> {
+fn launch_codex(request: Option<LaunchRequest>) -> Result<ProxyLaunchResult, String> {
     let (root, cfg) = proxy_context()?;
-    proxy::launch(&root, cfg.use_current_junction, &[])
-        .map_err(|cause| format!("启动 Codex 失败：{cause:#}"))?;
-    Ok(ProxyLaunchResult {
-        launched: true,
-        message: "已启动 Codex".into(),
-    })
+    let request = request.unwrap_or(LaunchRequest {
+        version: None,
+        switch_running: false,
+    });
+    let outcome = proxy::launch_version(
+        &root,
+        cfg.use_current_junction,
+        request.version.as_deref(),
+        request.switch_running,
+        &[],
+    )
+    .map_err(|cause| format!("启动应用失败：{cause:#}"))?;
+    Ok(bridge::launch_result_from_outcome(outcome))
 }
 
 #[tauri::command]
@@ -150,15 +158,80 @@ fn launch_installed_codex(request: LaunchInstalledRequest) -> Result<ProxyLaunch
         return Err("请选择安装位置".into());
     }
 
-    proxy::launch(
+    let outcome = proxy::launch_version(
         std::path::Path::new(root),
         request.use_current_junction,
+        None,
+        false,
         &[],
     )
-    .map_err(|cause| format!("启动 Codex 失败：{cause:#}"))?;
-    Ok(ProxyLaunchResult {
-        launched: true,
-        message: "已启动 Codex".into(),
+    .map_err(|cause| format!("启动应用失败：{cause:#}"))?;
+    Ok(bridge::launch_result_from_outcome(outcome))
+}
+
+#[tauri::command]
+fn get_version_inventory() -> Result<VersionInventory, String> {
+    let (root, cfg) = proxy_context()?;
+    bridge::version_inventory(&root, &cfg).map_err(|cause| format!("读取已安装版本失败：{cause:#}"))
+}
+
+#[tauri::command]
+fn save_retention_settings(
+    request: RetentionSettingsRequest,
+) -> Result<VersionActionResult, String> {
+    let (root, mut cfg) = proxy_context()?;
+    bridge::persist_retention_settings(&root, &mut cfg, request)
+        .map_err(|cause| format!("保存版本保留设置失败：{cause:#}"))
+}
+
+#[tauri::command]
+fn delete_installed_version(version: String) -> Result<VersionActionResult, String> {
+    let (root, mut cfg) = proxy_context()?;
+    if !versions::is_version_name(&version) {
+        return Err("版本号格式无效".into());
+    }
+    if matches!(cfg.install_mode, InstallMode::System) && !elevate::is_elevated() {
+        let exit_code =
+            elevate::respawn_elevated_wait(&format!("--delete-installed-version {version}"))
+                .map_err(|_| "删除系统版本需要管理员权限，授权未完成".to_string())?;
+        if exit_code != 0 {
+            return Err("管理员删除进程执行失败，版本未删除".into());
+        }
+        cfg = Config::load_runtime(&root)
+            .map_err(|cause| format!("重新读取版本状态失败：{cause:#}"))?;
+        let inventory = bridge::version_inventory(&root, &cfg)
+            .map_err(|cause| format!("刷新已安装版本失败：{cause:#}"))?;
+        return Ok(VersionActionResult {
+            applied: true,
+            message: format!("已删除版本 {version}"),
+            inventory,
+        });
+    }
+
+    delete_installed_version_inner(&root, &mut cfg, &version)
+}
+
+fn delete_installed_version_inner(
+    root: &std::path::Path,
+    cfg: &mut Config,
+    version: &str,
+) -> Result<VersionActionResult, String> {
+    let running = proxy::running_versions(&root.join("versions"));
+    let repair = versions::delete_and_repair(root, cfg, version, &running)
+        .map_err(|cause| format!("删除版本失败：{cause:#}"))?;
+    let inventory = bridge::version_inventory(root, cfg)
+        .map_err(|cause| format!("刷新已安装版本失败：{cause:#}"))?;
+    Ok(VersionActionResult {
+        applied: true,
+        message: if repair.current_repaired {
+            format!("已删除版本 {version}")
+        } else {
+            format!(
+                "已删除版本 {version}；current 入口将在下次启动时重试修复到 {}",
+                repair.default_version
+            )
+        },
+        inventory,
     })
 }
 
@@ -382,9 +455,30 @@ fn claim_single_instance_or_focus_existing() -> Option<()> {
     Some(())
 }
 
+fn run_cli_helper() -> Option<i32> {
+    let mut args = std::env::args().skip(1);
+    if args.next().as_deref() != Some("--delete-installed-version") {
+        return None;
+    }
+    let Some(version) = args.next() else {
+        return Some(2);
+    };
+    if args.next().is_some() {
+        return Some(2);
+    }
+
+    let result = proxy_context().and_then(|(root, mut cfg)| {
+        delete_installed_version_inner(&root, &mut cfg, &version).map(|_| ())
+    });
+    Some(if result.is_ok() { 0 } else { 1 })
+}
+
 fn main() {
     if std::env::args().any(|arg| arg == "--self-test") {
         return;
+    }
+    if let Some(exit_code) = run_cli_helper() {
+        std::process::exit(exit_code);
     }
 
     let Some(_single_instance_guard) = claim_single_instance_or_focus_existing() else {
@@ -405,6 +499,9 @@ fn main() {
             proxy_launch_status,
             launch_codex,
             launch_installed_codex,
+            get_version_inventory,
+            save_retention_settings,
+            delete_installed_version,
             check_update_status,
             apply_update_action,
             start_update,

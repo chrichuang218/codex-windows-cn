@@ -8,7 +8,21 @@
 //! instead of ours).
 
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaunchOutcome {
+    Launched {
+        version: String,
+        app_kind: crate::versions::AppKind,
+    },
+    SwitchRequired {
+        running_versions: Vec<String>,
+        target_version: String,
+    },
+}
 
 /// Same self-heal as the installer Launch button.
 pub fn resolve_codex_exe(root: &Path, use_junction: bool) -> Option<PathBuf> {
@@ -118,12 +132,48 @@ pub fn find_singleton_holder(_user_data_dir: &Path) -> Option<SingletonHolder> {
 /// they understand why their click may surface that other install's window
 /// instead of ours.
 pub fn launch(root: &Path, use_current_junction: bool, forward_args: &[String]) -> Result<()> {
-    let exe = resolve_codex_exe(root, use_current_junction)
-        .ok_or_else(|| anyhow::anyhow!("no installed Codex.exe found under {}", root.display()))?;
+    match launch_version(root, use_current_junction, None, false, forward_args)? {
+        LaunchOutcome::Launched { .. } => Ok(()),
+        LaunchOutcome::SwitchRequired {
+            running_versions,
+            target_version,
+        } => anyhow::bail!(
+            "version switch required from {} to {target_version}",
+            running_versions.join(", ")
+        ),
+    }
+}
+
+pub fn launch_version(
+    root: &Path,
+    use_current_junction: bool,
+    requested_version: Option<&str>,
+    switch_running: bool,
+    forward_args: &[String],
+) -> Result<LaunchOutcome> {
+    let target =
+        crate::versions::resolve_launch_target(root, use_current_junction, requested_version)?;
+    let versions_root = root.join("versions");
+    let running = running_versions(&versions_root);
+    let mut different: Vec<String> = running
+        .iter()
+        .filter(|version| version.as_str() != target.version)
+        .cloned()
+        .collect();
+    different.sort();
+    if !different.is_empty() && !switch_running {
+        return Ok(LaunchOutcome::SwitchRequired {
+            running_versions: different,
+            target_version: target.version,
+        });
+    }
+    let target_already_running = different.is_empty() && running.contains(&target.version);
+    if !different.is_empty() {
+        close_managed_processes(&versions_root, Duration::from_secs(5))?;
+    }
 
     if let Some(udd) = codex_user_data_dir() {
         if let Some(holder) = find_singleton_holder(&udd) {
-            let versions_root = root.join("versions");
             if !path_starts_with_ci(&holder.image_path, &versions_root) {
                 let body = format!(
                     "Codex is currently running from a different install:\n\n\
@@ -152,13 +202,24 @@ pub fn launch(root: &Path, use_current_junction: bool, forward_args: &[String]) 
 
     // Working dir = the versioned install dir so relative resource lookups
     // (Electron's default) resolve against the app root.
-    let working_dir = exe.parent().unwrap_or(root);
-    std::process::Command::new(&exe)
+    let working_dir = target.executable.parent().unwrap_or(root);
+    let mut child = std::process::Command::new(&target.executable)
         .args(forward_args)
         .current_dir(working_dir)
         .spawn()
-        .with_context(|| format!("spawning {}", exe.display()))?;
-    Ok(())
+        .with_context(|| format!("spawning {}", target.executable.display()))?;
+    if !target_already_running {
+        wait_for_running_version(
+            &versions_root,
+            &target.version,
+            &mut child,
+            Duration::from_secs(5),
+        )?;
+    }
+    Ok(LaunchOutcome::Launched {
+        version: target.version,
+        app_kind: target.app_kind,
+    })
 }
 
 /// Terminate every `Codex.exe` process whose image path is NOT under
@@ -211,7 +272,7 @@ fn kill_foreign_codex(_holder: &SingletonHolder, _versions_root: &Path) {}
 /// unrelated `codex.exe` binaries.
 #[cfg(windows)]
 pub fn find_our_codex_pids(versions_root: &Path) -> Vec<u32> {
-    find_codex_pids()
+    find_all_process_pids()
         .into_iter()
         .filter(|&pid| {
             process_image_path(pid)
@@ -224,6 +285,82 @@ pub fn find_our_codex_pids(versions_root: &Path) -> Vec<u32> {
 #[cfg(not(windows))]
 pub fn find_our_codex_pids(_versions_root: &Path) -> Vec<u32> {
     Vec::new()
+}
+
+pub fn running_versions(versions_root: &Path) -> HashSet<String> {
+    find_codex_pids()
+        .into_iter()
+        .filter_map(process_image_path)
+        .filter_map(|path| running_version_from_process_path(versions_root, &path))
+        .collect()
+}
+
+fn running_version_from_process_path(versions_root: &Path, process_path: &Path) -> Option<String> {
+    let root = std::fs::canonicalize(versions_root).ok()?;
+    let process = std::fs::canonicalize(process_path).ok()?;
+    let relative = process.strip_prefix(root).ok()?;
+    let mut components = relative.components();
+    let version = components.next()?.as_os_str().to_string_lossy();
+    let executable = components
+        .next()?
+        .as_os_str()
+        .to_string_lossy()
+        .to_ascii_lowercase();
+    if components.next().is_some() || !matches!(executable.as_str(), "codex.exe" | "chatgpt.exe") {
+        return None;
+    }
+    crate::versions::is_version_name(&version).then(|| version.into_owned())
+}
+
+fn close_managed_processes(versions_root: &Path, timeout: Duration) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let pids = find_our_codex_pids(versions_root);
+        if !pids.is_empty() {
+            terminate_pids(&pids, 250);
+        }
+
+        let remaining = find_our_codex_pids(versions_root);
+        let managed_singleton = codex_user_data_dir()
+            .and_then(|path| find_singleton_holder(&path))
+            .map(|holder| path_starts_with_ci(&holder.image_path, versions_root))
+            .unwrap_or(false);
+        if remaining.is_empty() && !managed_singleton {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!("未能完全关闭当前运行版本，请退出应用后重试");
+        }
+        std::thread::sleep(Duration::from_millis(80));
+    }
+}
+
+fn wait_for_running_version(
+    versions_root: &Path,
+    target_version: &str,
+    child: &mut std::process::Child,
+    timeout: Duration,
+) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    let mut first_seen = None;
+    loop {
+        if running_versions(versions_root).contains(target_version) {
+            let seen_at = first_seen.get_or_insert_with(Instant::now);
+            if seen_at.elapsed() >= Duration::from_millis(300) {
+                return Ok(());
+            }
+        } else {
+            first_seen = None;
+        }
+
+        if let Some(status) = child.try_wait().context("checking launched process")? {
+            anyhow::bail!("目标版本启动后立即退出（{status}）");
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!("未检测到目标版本 {target_version} 正常运行");
+        }
+        std::thread::sleep(Duration::from_millis(80));
+    }
 }
 
 /// Get the full image path for `pid`, or `None` if we can't query it.
@@ -254,7 +391,7 @@ fn process_image_path(pid: u32) -> Option<PathBuf> {
     }
 }
 
-/// Walk the process table collecting PIDs of every process named `Codex.exe`.
+/// Walk the process table collecting PIDs of Codex or ChatGPT main processes.
 /// Electron apps fork multiple processes (main + renderer + GPU + utility),
 /// all typically sharing the same exe name — callers that intend to terminate
 /// Codex should kill every PID returned here, not just the first.
@@ -269,7 +406,7 @@ pub fn find_codex_pids() -> Vec<u32> {
         TH32CS_SNAPPROCESS,
     };
 
-    let target = "codex.exe";
+    let targets = ["codex.exe", "chatgpt.exe"];
     let current_pid = std::process::id();
     let mut pids = Vec::new();
 
@@ -292,7 +429,7 @@ pub fn find_codex_pids() -> Vec<u32> {
                         .unwrap_or(entry.szExeFile.len());
                     let name =
                         String::from_utf16_lossy(&entry.szExeFile[..end]).to_ascii_lowercase();
-                    if name == target {
+                    if targets.contains(&name.as_str()) {
                         pids.push(entry.th32ProcessID);
                     }
                 }
@@ -308,6 +445,50 @@ pub fn find_codex_pids() -> Vec<u32> {
 
 #[cfg(not(windows))]
 pub fn find_codex_pids() -> Vec<u32> {
+    Vec::new()
+}
+
+#[cfg(not(windows))]
+fn process_image_path(_pid: u32) -> Option<PathBuf> {
+    None
+}
+
+#[cfg(windows)]
+fn find_all_process_pids() -> Vec<u32> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let current_pid = std::process::id();
+    let mut pids = Vec::new();
+    unsafe {
+        let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
+            Ok(handle) => handle,
+            Err(_) => return pids,
+        };
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        if Process32FirstW(snapshot, &mut entry).is_ok() {
+            loop {
+                if entry.th32ProcessID != current_pid {
+                    pids.push(entry.th32ProcessID);
+                }
+                if Process32NextW(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = CloseHandle(snapshot);
+    }
+    pids
+}
+
+#[cfg(not(windows))]
+fn find_all_process_pids() -> Vec<u32> {
     Vec::new()
 }
 
@@ -339,3 +520,33 @@ pub fn terminate_pids(pids: &[u32], wait_ms: u32) {
 
 #[cfg(not(windows))]
 pub fn terminate_pids(_pids: &[u32], _wait_ms: u32) {}
+
+#[cfg(test)]
+mod tests {
+    use super::running_version_from_process_path;
+
+    #[test]
+    fn running_version_counts_only_root_entrypoints() {
+        let root = std::env::temp_dir().join(format!(
+            "codex-windows-cn-running-version-{}",
+            std::process::id()
+        ));
+        let versions = root.join("versions");
+        let version = versions.join("26.707.3748.0");
+        let resources = version.join("resources");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&resources).expect("create process fixture");
+        let main = version.join("ChatGPT.exe");
+        let helper = resources.join("codex.exe");
+        std::fs::write(&main, b"main").expect("write main fixture");
+        std::fs::write(&helper, b"helper").expect("write helper fixture");
+
+        assert_eq!(
+            running_version_from_process_path(&versions, &main).as_deref(),
+            Some("26.707.3748.0")
+        );
+        assert_eq!(running_version_from_process_path(&versions, &helper), None);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+}

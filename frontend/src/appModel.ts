@@ -29,7 +29,7 @@ export function mergeInstallEvent(current: InstallEvent | null, event: InstallEv
     return {
       ...event,
       title: "正在下载",
-      detail: "正在下载 Codex 安装包。"
+      detail: "正在下载官方桌面应用安装包。"
     };
   }
 
@@ -50,6 +50,7 @@ export function formFromMode(defaults: InstallerDefaults, mode: InstallForm["mod
     createShortcut: modeDefaults.createShortcut,
     registerUninstall: modeDefaults.registerUninstall,
     keepVersions: modeDefaults.keepVersions,
+    keepAllVersions: modeDefaults.keepAllVersions,
     fetcher: defaults.recommendedFetcher,
     useCurrentJunction: modeDefaults.useCurrentJunction
   };
@@ -84,12 +85,12 @@ function initialInstallTitle(fetcher: Fetcher) {
 
 function initialInstallDetail(fetcher: Fetcher) {
   if (fetcher === "winget") {
-    return "正在调用 Windows 包管理器下载 Codex。";
+    return "正在调用 Windows 包管理器下载官方桌面应用。";
   }
   if (fetcher === "localFile") {
-    return "正在准备从本地安装包安装 Codex。";
+    return "正在准备从本地安装包安装官方桌面应用。";
   }
-  return "正在解析 Codex 下载地址，首次安装可能需要几分钟。";
+  return "正在解析官方桌面应用下载地址，首次安装可能需要几分钟。";
 }
 
 export const installerStepLabel: Record<InstallerStep, string> = {
@@ -103,8 +104,10 @@ export const installerStepLabel: Record<InstallerStep, string> = {
 };
 
 export const workspacePanelLabel: Record<WorkspacePanel, string> = {
-  home: "代理模式",
-  uninstall: "卸载 Codex",
+  home: "概览",
+  versions: "版本管理",
+  settings: "设置",
+  uninstall: "卸载助手",
   launcherUpdate: "启动器更新"
 };
 

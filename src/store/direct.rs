@@ -8,7 +8,7 @@
 //!
 //! SOAP envelope templates were adapted from StoreDev/StoreLib (MIT).
 
-use super::DownloadResult;
+use super::{DownloadResult, ResolvedProduct};
 use anyhow::{anyhow, bail, Context, Result};
 use quick_xml::escape::unescape;
 use quick_xml::events::Event;
@@ -44,6 +44,11 @@ struct PackageCandidate {
     architecture: String,
 }
 
+struct CatalogProduct {
+    category_id: String,
+    title: String,
+}
+
 pub(super) fn download_latest(
     product_id: &str,
     dest_dir: &Path,
@@ -64,29 +69,33 @@ pub(super) fn download_latest(
 /// file-URL + download steps. Cheaper than `download_latest` — used by the
 /// update checker.
 pub(super) fn resolve_latest_version(product_id: &str) -> Result<String> {
-    let (_url_unused, _moniker, version) = {
-        let client = metadata_http_client()?;
-        let category_id =
-            fetch_wu_category_id(&client, product_id).context("DisplayCatalog lookup failed")?;
-        let cookie = get_cookie(&client).context("FE3 GetCookie failed")?;
-        let sync_xml =
-            sync_updates(&client, &cookie, &category_id).context("FE3 SyncUpdates failed")?;
-        let candidates =
-            parse_package_candidates(&sync_xml).context("Parsing SyncUpdates response failed")?;
-        let best = pick_best_candidate(&candidates)
-            .ok_or_else(|| anyhow!("no x64 Codex candidate in SyncUpdates response"))?;
-        let version = moniker_version(&best.moniker)
-            .ok_or_else(|| anyhow!("couldn't parse version from moniker: {}", best.moniker))?
-            .to_string();
-        (String::new(), best.moniker.clone(), version)
-    };
-    Ok(version)
+    Ok(resolve_latest_product(product_id)?.version)
+}
+
+pub(super) fn resolve_latest_product(product_id: &str) -> Result<ResolvedProduct> {
+    let client = metadata_http_client()?;
+    let catalog =
+        fetch_catalog_product(&client, product_id).context("DisplayCatalog lookup failed")?;
+    let cookie = get_cookie(&client).context("FE3 GetCookie failed")?;
+    let sync_xml =
+        sync_updates(&client, &cookie, &catalog.category_id).context("FE3 SyncUpdates failed")?;
+    let candidates =
+        parse_package_candidates(&sync_xml).context("Parsing SyncUpdates response failed")?;
+    let best = pick_best_candidate(&candidates)
+        .ok_or_else(|| anyhow!("no x64 Codex candidate in SyncUpdates response"))?;
+    let version = moniker_version(&best.moniker)
+        .ok_or_else(|| anyhow!("couldn't parse version from moniker: {}", best.moniker))?
+        .to_string();
+    Ok(ResolvedProduct {
+        title: catalog.title,
+        version,
+    })
 }
 
 /// Debug helper exposed for `--dump-sync` CLI flag.
 pub(super) fn debug_dump_sync_xml(product_id: &str) -> Result<String> {
     let client = metadata_http_client()?;
-    let category_id = fetch_wu_category_id(&client, product_id)?;
+    let category_id = fetch_catalog_product(&client, product_id)?.category_id;
     let cookie = get_cookie(&client)?;
     sync_updates(&client, &cookie, &category_id)
 }
@@ -94,8 +103,9 @@ pub(super) fn debug_dump_sync_xml(product_id: &str) -> Result<String> {
 /// Runs DisplayCatalog + full FE3 resolve chain. Returns (signed_cdn_url, moniker, msix_version).
 fn resolve_url(product_id: &str) -> Result<(String, String, String)> {
     let client = metadata_http_client()?;
-    let category_id =
-        fetch_wu_category_id(&client, product_id).context("DisplayCatalog lookup failed")?;
+    let category_id = fetch_catalog_product(&client, product_id)
+        .context("DisplayCatalog lookup failed")?
+        .category_id;
     let cookie = get_cookie(&client).context("FE3 GetCookie failed")?;
     let sync_xml =
         sync_updates(&client, &cookie, &category_id).context("FE3 SyncUpdates failed")?;
@@ -155,12 +165,18 @@ fn download_http_client() -> Result<Client> {
         .build()?)
 }
 
-fn fetch_wu_category_id(client: &Client, product_id: &str) -> Result<String> {
+fn fetch_catalog_product(client: &Client, product_id: &str) -> Result<CatalogProduct> {
     let url = format!(
         "{}{}?market=US&languages=en-US",
         DISPLAYCATALOG_BASE, product_id
     );
     let body: Value = client.get(&url).send()?.error_for_status()?.json()?;
+    let title = body
+        .pointer("/Product/LocalizedProperties/0/ProductTitle")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Codex")
+        .to_string();
     let skus = body
         .pointer("/Product/DisplaySkuAvailabilities")
         .and_then(|v| v.as_array())
@@ -178,7 +194,10 @@ fn fetch_wu_category_id(client: &Client, product_id: &str) -> Result<String> {
             v => std::borrow::Cow::Borrowed(v),
         };
         if let Some(id) = inner.get("WuCategoryId").and_then(|v| v.as_str()) {
-            return Ok(id.to_string());
+            return Ok(CatalogProduct {
+                category_id: id.to_string(),
+                title,
+            });
         }
     }
     bail!("no WuCategoryId found in any SKU")

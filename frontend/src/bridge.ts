@@ -16,6 +16,7 @@ export type AppStatus = {
 
 export type InstallMode = "portable" | "user" | "system";
 export type Fetcher = "direct" | "winget" | "localFile";
+export type AppKind = "codex" | "chatGpt";
 
 export type InstallModeDefaults = {
   mode: InstallMode;
@@ -24,6 +25,7 @@ export type InstallModeDefaults = {
   createShortcut: boolean;
   registerUninstall: boolean;
   keepVersions: number;
+  keepAllVersions: boolean;
   useCurrentJunction: boolean;
 };
 
@@ -40,6 +42,7 @@ export type InstallRequest = {
   createShortcut: boolean;
   registerUninstall: boolean;
   keepVersions: number;
+  keepAllVersions: boolean;
   fetcher: Fetcher;
   useCurrentJunction: boolean;
   localMsix: string | null;
@@ -64,17 +67,63 @@ export type ProxyLaunchStatus = {
   knownLatest: string | null;
   canLaunch: boolean;
   codexExe: string | null;
+  productName: string;
+  runningVersions: string[];
   message: string;
 };
 
 export type ProxyLaunchResult = {
   launched: boolean;
+  switchRequired: boolean;
+  version: string | null;
+  productName: string | null;
+  runningVersions: string[];
   message: string;
+};
+
+export type LaunchRequest = {
+  version: string | null;
+  switchRunning: boolean;
 };
 
 export type LaunchInstalledRequest = {
   root: string;
   useCurrentJunction: boolean;
+};
+
+export type InstalledVersionStatus = {
+  version: string;
+  appKind: AppKind;
+  productName: string;
+  executable: string;
+  sizeBytes: number;
+  installedAtUnix: number;
+  isDefault: boolean;
+  isRunning: boolean;
+  canDelete: boolean;
+};
+
+export type VersionInventory = {
+  productName: string;
+  root: string;
+  defaultVersion: string | null;
+  runningVersions: string[];
+  keepVersions: number;
+  keepAllVersions: boolean;
+  fetcher: Fetcher;
+  useCurrentJunction: boolean;
+  versions: InstalledVersionStatus[];
+};
+
+export type RetentionSettingsRequest = {
+  keepVersions: number;
+  keepAllVersions: boolean;
+};
+
+export type VersionActionResult = {
+  applied: boolean;
+  message: string;
+  inventory: VersionInventory;
 };
 
 export type UpdateStatusKind = "upToDate" | "available" | "skipped" | "error";
@@ -92,6 +141,7 @@ export type UpdateStatus = {
   message: string;
   currentVersion: string | null;
   latestVersion: string | null;
+  productName?: string | null;
   actions: UpdateAction[];
 };
 
@@ -184,8 +234,13 @@ export type AppBridge = {
   getInstallStatus: () => Promise<InstallEvent | null>;
   onInstallEvent: (handler: (event: InstallEvent) => void) => () => void;
   getProxyLaunchStatus: () => Promise<ProxyLaunchStatus>;
-  launchCodex: () => Promise<ProxyLaunchResult>;
+  launchCodex: (request?: LaunchRequest) => Promise<ProxyLaunchResult>;
   launchInstalledCodex: (request: LaunchInstalledRequest) => Promise<ProxyLaunchResult>;
+  getVersionInventory: () => Promise<VersionInventory>;
+  deleteInstalledVersion: (version: string) => Promise<VersionActionResult>;
+  saveRetentionSettings: (
+    request: RetentionSettingsRequest
+  ) => Promise<VersionActionResult>;
   checkUpdateStatus: () => Promise<UpdateStatus>;
   startUpdate: () => Promise<UpdateStart>;
   getUpdateStatus: () => Promise<UpdateEvent | null>;
@@ -231,7 +286,8 @@ const fallbackInstallerDefaults: InstallerDefaults = {
       defaultRoot: ".\\CodexPortable",
       createShortcut: false,
       registerUninstall: false,
-      keepVersions: 2,
+      keepVersions: 5,
+      keepAllVersions: false,
       useCurrentJunction: true
     },
     {
@@ -240,7 +296,8 @@ const fallbackInstallerDefaults: InstallerDefaults = {
       defaultRoot: "C:\\Users\\Public\\Codex",
       createShortcut: true,
       registerUninstall: true,
-      keepVersions: 2,
+      keepVersions: 5,
+      keepAllVersions: false,
       useCurrentJunction: true
     },
     {
@@ -249,7 +306,8 @@ const fallbackInstallerDefaults: InstallerDefaults = {
       defaultRoot: "C:\\Program Files\\Codex",
       createShortcut: true,
       registerUninstall: true,
-      keepVersions: 2,
+      keepVersions: 5,
+      keepAllVersions: false,
       useCurrentJunction: true
     }
   ],
@@ -262,7 +320,21 @@ export const fallbackProxyLaunchStatus: ProxyLaunchStatus = {
   knownLatest: null,
   canLaunch: false,
   codexExe: null,
+  productName: "Codex",
+  runningVersions: [],
   message: "尚未完成安装"
+};
+
+export const fallbackVersionInventory: VersionInventory = {
+  productName: "Codex",
+  root: "",
+  defaultVersion: null,
+  runningVersions: [],
+  keepVersions: 5,
+  keepAllVersions: false,
+  fetcher: "direct",
+  useCurrentJunction: true,
+  versions: []
 };
 
 export const fallbackUpdateStatus: UpdateStatus = {
@@ -277,8 +349,8 @@ export const fallbackUpdateStatus: UpdateStatus = {
 export const fallbackUninstallConfirmation: UninstallConfirmation = {
   title: "确认卸载 Codex Windows 中文助手",
   root: "尚未完成安装",
-  deleteItems: ["已安装的 Codex 版本", "下载缓存", "启动器配置"],
-  preserveItems: ["Codex 登录数据", "日志和诊断信息"]
+  deleteItems: ["已安装的桌面应用版本", "下载缓存", "启动器配置"],
+  preserveItems: ["Codex/ChatGPT 登录数据", "日志和诊断信息"]
 };
 
 export const fallbackUninstallStatus: UninstallStatus = {
@@ -360,19 +432,62 @@ export const tauriBridge: AppBridge = {
 
     return invoke<ProxyLaunchStatus>("proxy_launch_status");
   },
-  launchCodex: () => {
+  launchCodex: (request) => {
     if (!("__TAURI_INTERNALS__" in window)) {
-      return Promise.resolve({ launched: true, message: "已启动 Codex" });
+      const version = request?.version ?? fallbackVersionInventory.defaultVersion ?? "26.707.3748.0";
+      return Promise.resolve({
+        launched: true,
+        switchRequired: false,
+        version,
+        productName: "ChatGPT",
+        runningVersions: [],
+        message: `已启动 ChatGPT ${version}`
+      });
     }
 
-    return invoke<ProxyLaunchResult>("launch_codex");
+    return invoke<ProxyLaunchResult>("launch_codex", { request: request ?? null });
   },
   launchInstalledCodex: (request) => {
     if (!("__TAURI_INTERNALS__" in window)) {
-      return Promise.resolve({ launched: true, message: "已启动 Codex" });
+      return Promise.resolve({
+        launched: true,
+        switchRequired: false,
+        version: null,
+        productName: "Codex",
+        runningVersions: [],
+        message: "已启动 Codex"
+      });
     }
 
     return invoke<ProxyLaunchResult>("launch_installed_codex", { request });
+  },
+  getVersionInventory: () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve(fallbackVersionInventory);
+    }
+    return invoke<VersionInventory>("get_version_inventory");
+  },
+  deleteInstalledVersion: (version) => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve({
+        applied: true,
+        message: `已删除版本 ${version}`,
+        inventory: fallbackVersionInventory
+      });
+    }
+    return invoke<VersionActionResult>("delete_installed_version", { version });
+  },
+  saveRetentionSettings: (request) => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve({
+        applied: true,
+        message: request.keepAllVersions
+          ? "已设置为全部保留"
+          : `将自动保留最近 ${request.keepVersions} 个版本`,
+        inventory: { ...fallbackVersionInventory, ...request }
+      });
+    }
+    return invoke<VersionActionResult>("save_retention_settings", { request });
   },
   checkUpdateStatus: () => {
     if (!("__TAURI_INTERNALS__" in window)) {

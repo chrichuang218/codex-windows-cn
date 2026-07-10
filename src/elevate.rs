@@ -4,10 +4,14 @@
 
 use anyhow::{Context, Result};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, WAIT_FAILED};
 use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
-use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-use windows::Win32::UI::Shell::ShellExecuteW;
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, GetExitCodeProcess, OpenProcessToken, WaitForSingleObject, INFINITE,
+};
+use windows::Win32::UI::Shell::{
+    ShellExecuteExW, ShellExecuteW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+};
 use windows::Win32::UI::WindowsAndMessaging::SW_NORMAL;
 
 pub fn is_elevated() -> bool {
@@ -55,6 +59,44 @@ pub fn respawn_elevated(args: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Run the current executable elevated and wait for the one-shot helper to
+/// finish. The caller stays unelevated and can refresh its state afterward.
+pub fn respawn_elevated_wait(args: &str) -> Result<u32> {
+    let exe = std::env::current_exe().context("current_exe")?;
+    let exe_w = wide(&exe.to_string_lossy());
+    let verb = wide("runas");
+    let args_w = wide(args);
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS,
+        hwnd: HWND::default(),
+        lpVerb: PCWSTR(verb.as_ptr()),
+        lpFile: PCWSTR(exe_w.as_ptr()),
+        lpParameters: PCWSTR(args_w.as_ptr()),
+        nShow: SW_NORMAL.0,
+        ..Default::default()
+    };
+
+    unsafe {
+        ShellExecuteExW(&mut info).context("ShellExecuteExW runas")?;
+        if info.hProcess.is_invalid() {
+            anyhow::bail!("elevated helper did not return a process handle");
+        }
+
+        let wait = WaitForSingleObject(info.hProcess, INFINITE);
+        if wait == WAIT_FAILED {
+            let _ = CloseHandle(info.hProcess);
+            anyhow::bail!("waiting for elevated helper failed");
+        }
+
+        let mut exit_code = 1u32;
+        let exit_result = GetExitCodeProcess(info.hProcess, &mut exit_code);
+        let _ = CloseHandle(info.hProcess);
+        exit_result.context("GetExitCodeProcess")?;
+        Ok(exit_code)
+    }
 }
 
 fn wide(s: &str) -> Vec<u16> {

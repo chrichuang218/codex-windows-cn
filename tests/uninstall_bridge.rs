@@ -13,12 +13,12 @@ fn uninstall_confirmation_explains_deleted_and_preserved_data() {
     assert_eq!(confirmation.root, r"C:\Users\tester\AppData\Local\Codex");
     assert!(confirmation
         .delete_items
-        .contains(&"已安装的 Codex 版本".into()));
+        .contains(&"已安装的桌面应用版本".into()));
     assert!(confirmation.delete_items.contains(&"下载缓存".into()));
     assert!(confirmation.delete_items.contains(&"启动器配置".into()));
     assert!(confirmation
         .preserve_items
-        .contains(&"Codex 登录数据".into()));
+        .contains(&"Codex/ChatGPT 登录数据".into()));
     assert!(confirmation
         .preserve_items
         .contains(&"日志和诊断信息".into()));

@@ -38,6 +38,7 @@ pub struct InstallOptions {
     /// uninstall via Windows Settings → Apps. Off by default for Portable.
     pub register_uninstall: bool,
     pub keep_versions: u32,
+    pub keep_all_versions: bool,
     pub fetcher: Fetcher,
     /// Create `versions/current` junction pointing at the newest install.
     pub use_current_junction: bool,
@@ -186,6 +187,7 @@ fn update_inner(root: &Path, on_msg: &dyn Fn(InstallMsg)) -> Result<String> {
         mode: cfg.install_mode,
         register_uninstall: cfg.register_uninstall,
         keep_versions: cfg.keep_versions,
+        keep_all_versions: cfg.keep_all_versions,
         use_current_junction: cfg.use_current_junction,
         msix_path: result.msix_path.clone(),
     };
@@ -272,6 +274,7 @@ fn run_inner(
         known_latest: Some(result.version.clone()),
         skipped_version: None,
         keep_versions: opts.keep_versions.max(1),
+        keep_all_versions: opts.keep_all_versions,
         fetcher: match opts.fetcher {
             Fetcher::LocalFile => Fetcher::Direct, // don't persist LocalFile
             f => f,
@@ -302,6 +305,7 @@ fn run_inner(
         create_shortcut: opts.create_shortcut,
         register_uninstall: opts.register_uninstall,
         keep_versions: cfg.keep_versions,
+        keep_all_versions: cfg.keep_all_versions,
         use_current_junction: cfg.use_current_junction,
         msix_path: result.msix_path.clone(),
     };
@@ -317,6 +321,7 @@ struct PostInstallWork {
     create_shortcut: bool,
     register_uninstall: bool,
     keep_versions: u32,
+    keep_all_versions: bool,
     use_current_junction: bool,
     msix_path: PathBuf,
 }
@@ -337,7 +342,7 @@ fn run_post_install_work(work: PostInstallWork) {
             eprintln!("warn: registry uninstall entry: {e:#}");
         }
     }
-    let _ = extract::prune_versions(&work.root, work.keep_versions);
+    prune_versions(&work.root, work.keep_versions, work.keep_all_versions);
     let _ = std::fs::remove_file(&work.msix_path);
 }
 
@@ -347,6 +352,7 @@ struct PostUpdateWork {
     mode: InstallMode,
     register_uninstall: bool,
     keep_versions: u32,
+    keep_all_versions: bool,
     use_current_junction: bool,
     msix_path: PathBuf,
 }
@@ -374,8 +380,20 @@ fn run_post_update_work(work: PostUpdateWork) {
         }
     }
 
-    let _ = extract::prune_versions(&work.root, work.keep_versions);
+    prune_versions(&work.root, work.keep_versions, work.keep_all_versions);
     let _ = std::fs::remove_file(&work.msix_path);
+}
+
+fn prune_versions(root: &Path, keep_versions: u32, keep_all_versions: bool) {
+    let policy = if keep_all_versions {
+        crate::versions::RetentionPolicy::KeepAll
+    } else {
+        crate::versions::RetentionPolicy::KeepLatest(keep_versions)
+    };
+    let running = crate::proxy::running_versions(&root.join("versions"));
+    if let Err(error) = crate::versions::prune_installed(root, policy, &running) {
+        eprintln!("warn: version pruning failed: {error:#}");
+    }
 }
 
 /// Copy the currently-running launcher to `<root>/codex-launcher.exe`.

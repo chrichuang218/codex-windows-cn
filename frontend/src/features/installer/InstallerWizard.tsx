@@ -20,15 +20,10 @@ export function InstallerWizard({ controller }: { controller: ReadyAppController
     installerDefaults,
     installerStep,
     installState,
-    launchCodex,
-    launchInstalledCodex,
+    installedProductName,
     launchMessage,
-    launchState,
     patchInstallForm,
-    proxyStatus,
-    setForcedWorkspace,
     setInstallerStep,
-    setWorkspacePanel,
     startInstall,
     status
   } = controller;
@@ -45,34 +40,13 @@ export function InstallerWizard({ controller }: { controller: ReadyAppController
       title={stepTitle}
     >
       {installerStep === "welcome" ? (
-        <section className="screen welcome-screen">
-          <p className="eyebrow">{status.v1Boundary}</p>
-          <h2>欢迎使用 Codex 安装助手</h2>
-          <p className="muted">下载官方 Microsoft Store 包并安装 Codex，无需打开 Store 应用。</p>
-          <div className="route-row" aria-label="核心路径">
-            <button onClick={() => setInstallerStep("mode")} type="button">
-              安装
-            </button>
-            <button
-              disabled={!proxyStatus.managedInstall}
-              onClick={() => {
-                setWorkspacePanel("home");
-                setForcedWorkspace(true);
-              }}
-              type="button"
-            >
-              更新
-            </button>
-            <button
-              disabled={!proxyStatus.canLaunch || launchState !== "idle"}
-              onClick={launchCodex}
-              type="button"
-            >
-              {launchState === "idle" ? "启动" : "启动中"}
-            </button>
+        <section className="screen welcome-screen center-screen">
+          <div aria-hidden="true" className="assistant-mark">C</div>
+          <div className="welcome-copy">
+            <p className="eyebrow">{status.v1Boundary}</p>
+            <h2>欢迎使用 Codex Windows 中文助手</h2>
+            <p className="muted">下载并安装官方 Microsoft Store 桌面应用，无需打开 Store。</p>
           </div>
-          {launchMessage ? <span className="inline-status">{launchMessage}</span> : null}
-          <p className="fine-print">点击下一步选择安装位置。</p>
         </section>
       ) : null}
 
@@ -183,7 +157,7 @@ export function InstallerWizard({ controller }: { controller: ReadyAppController
 
       {installerStep === "done" ? (
         <section className="screen center-screen">
-          <p className="success-text">Codex 已安装</p>
+          <p className="success-text">{installedProductName} 已安装</p>
           {installEvent?.version ? <p className="muted">版本 {installEvent.version}</p> : null}
           <code>{installForm.root}</code>
           {launchMessage ? <span className="inline-status">{launchMessage}</span> : null}
@@ -209,6 +183,7 @@ function InstallerFooter({ controller }: { controller: ReadyAppController }) {
     installForm,
     installerStep,
     installState,
+    installedProductName,
     launchInstalledCodex,
     launchState,
     setInstallerStep,
@@ -218,9 +193,9 @@ function InstallerFooter({ controller }: { controller: ReadyAppController }) {
   if (installerStep === "welcome") {
     return (
       <>
-        <span />
+        <span className="footer-note">官方 Microsoft Store 分发</span>
         <button className="primary-button" onClick={() => setInstallerStep("mode")} type="button">
-          下一步
+          开始安装
         </button>
       </>
     );
@@ -301,7 +276,7 @@ function InstallerFooter({ controller }: { controller: ReadyAppController }) {
           onClick={launchInstalledCodex}
           type="button"
         >
-          {launchState === "idle" ? "启动 Codex" : "启动中"}
+          {launchState === "idle" ? `启动 ${installedProductName}` : "启动中"}
         </button>
       </>
     );

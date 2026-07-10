@@ -15,7 +15,7 @@ export type AppProps = {
 };
 
 export type InstallerStep = "welcome" | "mode" | "path" | "options" | "progress" | "done" | "error";
-export type WorkspacePanel = "home" | "uninstall" | "launcherUpdate";
+export type WorkspacePanel = "home" | "versions" | "settings" | "uninstall" | "launcherUpdate";
 
 export type InstallForm = {
   mode: InstallMode;
@@ -23,6 +23,7 @@ export type InstallForm = {
   createShortcut: boolean;
   registerUninstall: boolean;
   keepVersions: number;
+  keepAllVersions: boolean;
   fetcher: Fetcher;
   useCurrentJunction: boolean;
 };

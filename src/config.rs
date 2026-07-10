@@ -60,6 +60,9 @@ pub struct Config {
     pub skipped_version: Option<String>,
     #[serde(default = "default_keep_versions")]
     pub keep_versions: u32,
+    /// Disable automatic version pruning. Manual deletion remains available.
+    #[serde(default)]
+    pub keep_all_versions: bool,
     /// Which strategy the launcher uses to download MSIX updates. Currently
     /// not auto-flipped on fallback success — see `installer::update_inner`.
     #[serde(default)]
@@ -93,7 +96,7 @@ pub struct Config {
 }
 
 fn default_keep_versions() -> u32 {
-    2
+    5
 }
 fn default_true() -> bool {
     true

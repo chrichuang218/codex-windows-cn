@@ -60,6 +60,12 @@ pub struct DownloadResult {
     pub version: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedProduct {
+    pub title: String,
+    pub version: String,
+}
+
 /// Download the latest MSIX via the specified fetcher. Progress callback
 /// fires periodically as bytes arrive; `total_opt` may be `None` when the
 /// fetcher can't determine the full size (e.g. winget).
@@ -116,6 +122,10 @@ pub fn download_latest_with_fallback(
 /// the current Entra-auth gate.
 pub fn resolve_latest_version(_fetcher: Fetcher, product_id: &str) -> Result<String> {
     direct::resolve_latest_version(product_id)
+}
+
+pub fn resolve_latest_product(_fetcher: Fetcher, product_id: &str) -> Result<ResolvedProduct> {
+    direct::resolve_latest_product(product_id)
 }
 
 /// Debug helper: dump the raw (html-decoded) SyncUpdates SOAP response.

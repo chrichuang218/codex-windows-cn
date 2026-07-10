@@ -51,6 +51,7 @@ function cachedUpdateStatusFromProxy(
 ): LoadedAppData["updateStatus"] {
   const currentVersion = proxyStatus.currentVersion;
   const latestVersion = proxyStatus.knownLatest;
+  const productName = proxyStatus.productName || "Codex";
 
   if (
     currentVersion &&
@@ -59,10 +60,11 @@ function cachedUpdateStatusFromProxy(
   ) {
     return {
       kind: "available",
-      title: "发现 Codex 新版本",
+      title: `发现 ${productName} 新版本`,
       message: `当前版本 ${currentVersion}，可更新到 ${latestVersion}`,
       currentVersion,
       latestVersion,
+      productName,
       actions: updateReminderActions
     };
   }
@@ -70,10 +72,11 @@ function cachedUpdateStatusFromProxy(
   if (currentVersion && latestVersion) {
     return {
       kind: "upToDate",
-      title: "Codex 已是最新版本",
+      title: `${productName} 已是最新版本`,
       message: `当前版本 ${currentVersion}`,
       currentVersion,
       latestVersion,
+      productName,
       actions: []
     };
   }
@@ -81,20 +84,22 @@ function cachedUpdateStatusFromProxy(
   if (currentVersion) {
     return {
       kind: "skipped",
-      title: "Codex 已安装",
+      title: `${productName} 已安装`,
       message: "后台检查更新中，不影响启动。",
       currentVersion,
       latestVersion: currentVersion,
+      productName,
       actions: []
     };
   }
 
   return {
     kind: "skipped",
-    title: "Codex 已安装",
+    title: `${productName} 已安装`,
     message: "后台检查更新中，不影响启动。",
     currentVersion,
     latestVersion,
+    productName,
     actions: []
   };
 }
@@ -141,6 +146,7 @@ export function useAppController(bridge: AppBridge) {
   const [installFailure, setInstallFailure] = useState<string | null>(null);
   const [launchState, setLaunchState] = useState<"idle" | "launching">("idle");
   const [launchMessage, setLaunchMessage] = useState<string | null>(null);
+  const [installedProductName, setInstalledProductName] = useState("Codex");
   const [updateState, setUpdateState] = useState<"idle" | "running">("idle");
   const [updateEvent, setUpdateEvent] = useState<UpdateEvent | null>(null);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
@@ -196,9 +202,10 @@ export function useAppController(bridge: AppBridge) {
                   setUpdateStatus({
                     kind: "error",
                     title: "检查更新失败",
-                    message: errorMessage(cause, "无法读取 Codex 更新状态"),
+                    message: errorMessage(cause, `无法读取 ${nextProxyStatus.productName} 更新状态`),
                     currentVersion: nextProxyStatus.currentVersion,
                     latestVersion: nextProxyStatus.knownLatest,
+                    productName: nextProxyStatus.productName,
                     actions: []
                   });
                 }
@@ -381,25 +388,32 @@ export function useAppController(bridge: AppBridge) {
     if (installEvent?.kind === "done") {
       setInstallState("idle");
       setInstallerStep("done");
+      bridge
+        .getVersionInventory()
+        .then((inventory) => setInstalledProductName(inventory.productName))
+        .catch(() => {});
     }
     if (installEvent?.kind === "error") {
       setInstallState("idle");
       setInstallFailure(installEvent.message ?? installEvent.detail);
       setInstallerStep("error");
     }
-  }, [installEvent]);
+  }, [bridge, installEvent]);
 
   useEffect(() => {
     if (updateEvent?.kind === "done") {
       setUpdateState("idle");
       const version = updateEvent.version;
       if (version) {
+        const productName =
+          updateStatus.productName ?? proxyStatus?.productName ?? installedProductName;
         setUpdateStatus({
           kind: "upToDate",
-          title: "Codex 已更新",
+          title: `${productName} 已更新`,
           message: `当前版本 ${version}`,
           currentVersion: version,
           latestVersion: version,
+          productName,
           actions: []
         });
       }
@@ -413,7 +427,7 @@ export function useAppController(bridge: AppBridge) {
     if (updateEvent?.kind === "error") {
       setUpdateState("idle");
     }
-  }, [bridge, updateEvent]);
+  }, [bridge, installedProductName, proxyStatus?.productName, updateEvent, updateStatus.productName]);
 
   useEffect(() => {
     if (launcherUpdateEvent?.kind === "done" || launcherUpdateEvent?.kind === "error") {
@@ -455,6 +469,7 @@ export function useAppController(bridge: AppBridge) {
         createShortcut: installForm.createShortcut,
         registerUninstall: installForm.registerUninstall,
         keepVersions: installForm.keepVersions,
+        keepAllVersions: installForm.keepAllVersions,
         fetcher: installForm.fetcher,
         useCurrentJunction: installForm.useCurrentJunction,
         localMsix: null
@@ -495,7 +510,7 @@ export function useAppController(bridge: AppBridge) {
       const result = await bridge.launchCodex();
       setLaunchMessage(result.message);
     } catch (cause) {
-      setLaunchMessage(cause instanceof Error ? cause.message : "启动 Codex 失败");
+      setLaunchMessage(cause instanceof Error ? cause.message : "启动应用失败");
     } finally {
       setLaunchState("idle");
     }
@@ -513,20 +528,24 @@ export function useAppController(bridge: AppBridge) {
         root: installForm.root,
         useCurrentJunction: installForm.useCurrentJunction
       });
+      if (result.productName) {
+        setInstalledProductName(result.productName);
+      }
       setLaunchMessage(result.message);
     } catch (cause) {
-      setLaunchMessage(cause instanceof Error ? cause.message : "启动 Codex 失败");
+      setLaunchMessage(cause instanceof Error ? cause.message : "启动应用失败");
     } finally {
       setLaunchState("idle");
     }
   };
 
   const startUpdate = async () => {
+    const productName = updateStatus.productName ?? proxyStatus?.productName ?? "Codex";
     setUpdateState("running");
     setUpdateEvent({
       kind: "phase",
       title: "正在下载更新",
-      detail: "正在使用已配置的下载方式获取 Codex 更新包。",
+      detail: `正在使用已配置的下载方式获取 ${productName} 更新包。`,
       progress: null,
       version: null,
       message: null
@@ -612,6 +631,7 @@ export function useAppController(bridge: AppBridge) {
     activeMode,
     applyLauncherUpdateAction,
     applyUpdateAction,
+    bridge,
     cancelInstall,
     chooseMode,
     installEvent,
@@ -620,6 +640,7 @@ export function useAppController(bridge: AppBridge) {
     installProgress: toPercent(installEvent?.progress),
     installState,
     installed,
+    installedProductName,
     installedVersion,
     installerDefaults,
     installerStep,

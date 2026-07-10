@@ -45,17 +45,20 @@ export function ProductShell({
 export function LoadingSplash() {
   return (
     <ProductShell
-      footer={<span />}
-      modeLabel="启动中"
+      bodyClassName="boot-body"
+      footer={<span className="footer-note">官方 Microsoft Store 分发</span>}
+      modeLabel="安装向导"
       productName="Codex Windows 中文助手"
-      stageLabel="正在检查"
-      title="正在检查更新"
+      stageLabel="正在加载"
+      title="正在启动 Codex Windows 中文助手"
     >
       <ProgressScreen
-        detail="正在读取安装、更新和启动器状态。"
+        brandMark="C"
+        compact
+        detail="正在读取安装、版本和更新状态。"
         indeterminate
         progress={null}
-        title="正在检查更新"
+        title="正在启动 Codex Windows 中文助手"
       />
     </ProductShell>
   );

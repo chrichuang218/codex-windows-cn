@@ -6,6 +6,7 @@ use crate::safety;
 use crate::store::Fetcher;
 use crate::uninstall::UninstallMsg;
 use crate::updater::{self, LauncherDecision, UpdateDecision};
+use crate::versions::{self, AppKind};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -45,6 +46,7 @@ pub struct InstallModeDefaults {
     pub create_shortcut: bool,
     pub register_uninstall: bool,
     pub keep_versions: u32,
+    pub keep_all_versions: bool,
     pub use_current_junction: bool,
 }
 
@@ -72,6 +74,7 @@ pub struct InstallRequest {
     pub create_shortcut: bool,
     pub register_uninstall: bool,
     pub keep_versions: u32,
+    pub keep_all_versions: bool,
     pub fetcher: BridgeFetcher,
     pub use_current_junction: bool,
     pub local_msix: Option<String>,
@@ -111,6 +114,8 @@ pub struct ProxyLaunchStatus {
     pub known_latest: Option<String>,
     pub can_launch: bool,
     pub codex_exe: Option<String>,
+    pub product_name: String,
+    pub running_versions: Vec<String>,
     pub message: String,
 }
 
@@ -118,7 +123,18 @@ pub struct ProxyLaunchStatus {
 #[serde(rename_all = "camelCase")]
 pub struct ProxyLaunchResult {
     pub launched: bool,
+    pub switch_required: bool,
+    pub version: Option<String>,
+    pub product_name: Option<String>,
+    pub running_versions: Vec<String>,
     pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchRequest {
+    pub version: Option<String>,
+    pub switch_running: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -130,12 +146,56 @@ pub struct LaunchInstalledRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct InstalledVersionStatus {
+    pub version: String,
+    pub app_kind: AppKind,
+    pub product_name: String,
+    pub executable: String,
+    pub size_bytes: u64,
+    pub installed_at_unix: u64,
+    pub is_default: bool,
+    pub is_running: bool,
+    pub can_delete: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionInventory {
+    pub product_name: String,
+    pub root: String,
+    pub default_version: Option<String>,
+    pub running_versions: Vec<String>,
+    pub keep_versions: u32,
+    pub keep_all_versions: bool,
+    pub fetcher: BridgeFetcher,
+    pub use_current_junction: bool,
+    pub versions: Vec<InstalledVersionStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetentionSettingsRequest {
+    pub keep_versions: u32,
+    pub keep_all_versions: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionActionResult {
+    pub applied: bool,
+    pub message: String,
+    pub inventory: VersionInventory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateStatus {
     pub kind: UpdateStatusKind,
     pub title: String,
     pub message: String,
     pub current_version: Option<String>,
     pub latest_version: Option<String>,
+    pub product_name: Option<String>,
     pub actions: Vec<UpdateAction>,
 }
 
@@ -327,12 +387,17 @@ pub fn check_update_status(cfg: &Config) -> UpdateStatus {
 
 pub fn update_status_from_decision(decision: UpdateDecision) -> UpdateStatus {
     match decision {
-        UpdateDecision::Available { current, latest } => UpdateStatus {
+        UpdateDecision::Available {
+            current,
+            latest,
+            product_name,
+        } => UpdateStatus {
             kind: UpdateStatusKind::Available,
-            title: "发现 Codex 新版本".into(),
+            title: format!("发现 {product_name} 新版本"),
             message: format!("当前版本 {current}，可更新到 {latest}"),
             current_version: Some(current),
             latest_version: Some(latest),
+            product_name: Some(product_name),
             actions: vec![
                 UpdateAction::UpdateNow,
                 UpdateAction::NotNow,
@@ -342,12 +407,16 @@ pub fn update_status_from_decision(decision: UpdateDecision) -> UpdateStatus {
                 UpdateAction::Never,
             ],
         },
-        UpdateDecision::UpToDate { version } => UpdateStatus {
+        UpdateDecision::UpToDate {
+            version,
+            product_name,
+        } => UpdateStatus {
             kind: UpdateStatusKind::UpToDate,
-            title: "Codex 已是最新版本".into(),
+            title: format!("{product_name} 已是最新版本"),
             message: format!("当前版本 {version} 已是最新"),
             current_version: Some(version.clone()),
             latest_version: Some(version),
+            product_name: Some(product_name),
             actions: Vec::new(),
         },
         UpdateDecision::Skipped { reason } => UpdateStatus {
@@ -356,6 +425,7 @@ pub fn update_status_from_decision(decision: UpdateDecision) -> UpdateStatus {
             message: reason,
             current_version: None,
             latest_version: None,
+            product_name: None,
             actions: Vec::new(),
         },
         UpdateDecision::Error(message) => UpdateStatus {
@@ -364,6 +434,7 @@ pub fn update_status_from_decision(decision: UpdateDecision) -> UpdateStatus {
             message,
             current_version: None,
             latest_version: None,
+            product_name: None,
             actions: Vec::new(),
         },
     }
@@ -427,13 +498,13 @@ pub fn uninstall_confirmation(root: &Path) -> UninstallConfirmation {
         title: "确认卸载 Codex Windows 中文助手".into(),
         root: root.to_string_lossy().into_owned(),
         delete_items: vec![
-            "已安装的 Codex 版本".into(),
+            "已安装的桌面应用版本".into(),
             "下载缓存".into(),
             "启动器配置".into(),
             "开始菜单快捷方式".into(),
             "Windows 卸载入口".into(),
         ],
-        preserve_items: vec!["Codex 登录数据".into(), "日志和诊断信息".into()],
+        preserve_items: vec!["Codex/ChatGPT 登录数据".into(), "日志和诊断信息".into()],
     }
 }
 
@@ -538,7 +609,7 @@ pub fn update_event_from_msg(msg: InstallMsg) -> UpdateEvent {
         InstallMsg::Done { version } => UpdateEvent {
             kind: UpdateEventKind::Done,
             title: "更新完成".into(),
-            detail: format!("已更新到 Codex {version}"),
+            detail: format!("已更新官方桌面应用到 {version}"),
             progress: Some(1.0),
             version: Some(version),
             message: None,
@@ -596,22 +667,117 @@ pub fn launcher_update_event_from_msg(msg: LauncherUpdateMsg) -> LauncherUpdateE
 }
 
 pub fn proxy_launch_status(root: &Path, cfg: &Config) -> ProxyLaunchStatus {
-    match proxy::resolve_codex_exe(root, cfg.use_current_junction) {
-        Some(exe) => ProxyLaunchStatus {
-            managed_install: true,
-            current_version: Some(cfg.current_version.clone()),
-            known_latest: cfg.known_latest.clone(),
-            can_launch: true,
-            codex_exe: Some(exe.to_string_lossy().into_owned()),
-            message: "可以启动 Codex".into(),
-        },
-        None => ProxyLaunchStatus {
+    match version_inventory(root, cfg) {
+        Ok(inventory) if !inventory.versions.is_empty() => {
+            let exe = proxy::resolve_codex_exe(root, cfg.use_current_junction);
+            ProxyLaunchStatus {
+                managed_install: true,
+                current_version: inventory.default_version,
+                known_latest: cfg.known_latest.clone(),
+                can_launch: exe.is_some(),
+                codex_exe: exe.map(|path| path.to_string_lossy().into_owned()),
+                product_name: inventory.product_name.clone(),
+                running_versions: inventory.running_versions,
+                message: format!("可以启动 {}", inventory.product_name),
+            }
+        }
+        _ => ProxyLaunchStatus {
             managed_install: true,
             current_version: Some(cfg.current_version.clone()),
             known_latest: cfg.known_latest.clone(),
             can_launch: false,
             codex_exe: None,
-            message: "未找到可启动的 Codex.exe".into(),
+            product_name: "Codex".into(),
+            running_versions: Vec::new(),
+            message: "未找到可启动的 Codex 或 ChatGPT".into(),
+        },
+    }
+}
+
+pub fn version_inventory(root: &Path, cfg: &Config) -> anyhow::Result<VersionInventory> {
+    let installed = versions::scan_installed(root)?;
+    let running = proxy::running_versions(&root.join("versions"));
+    let default_version = installed.first().map(|item| item.version.clone());
+    let product_name = installed
+        .first()
+        .map(|item| item.app_kind.display_name())
+        .unwrap_or("Codex")
+        .to_string();
+    let can_remove = installed.len() > 1;
+    let mut running_versions: Vec<String> = running.iter().cloned().collect();
+    running_versions.sort();
+    let versions = installed
+        .into_iter()
+        .map(|item| {
+            let is_default = default_version.as_deref() == Some(item.version.as_str());
+            let is_running = running.contains(&item.version);
+            InstalledVersionStatus {
+                version: item.version,
+                app_kind: item.app_kind,
+                product_name: item.app_kind.display_name().to_string(),
+                executable: item.executable.to_string_lossy().into_owned(),
+                size_bytes: item.size_bytes,
+                installed_at_unix: item.installed_at_unix,
+                is_default,
+                is_running,
+                can_delete: can_remove && !is_running,
+            }
+        })
+        .collect();
+
+    Ok(VersionInventory {
+        product_name,
+        root: root.to_string_lossy().into_owned(),
+        default_version,
+        running_versions,
+        keep_versions: cfg.keep_versions.max(1),
+        keep_all_versions: cfg.keep_all_versions,
+        fetcher: bridge_fetcher(cfg.fetcher),
+        use_current_junction: cfg.use_current_junction,
+        versions,
+    })
+}
+
+pub fn persist_retention_settings(
+    root: &Path,
+    cfg: &mut Config,
+    request: RetentionSettingsRequest,
+) -> anyhow::Result<VersionActionResult> {
+    cfg.keep_versions = request.keep_versions.max(1);
+    cfg.keep_all_versions = request.keep_all_versions;
+    cfg.save_runtime(root)?;
+    let inventory = version_inventory(root, cfg)?;
+    Ok(VersionActionResult {
+        applied: true,
+        message: if cfg.keep_all_versions {
+            "已设置为全部保留".into()
+        } else {
+            format!("将自动保留最近 {} 个版本", cfg.keep_versions)
+        },
+        inventory,
+    })
+}
+
+pub fn launch_result_from_outcome(outcome: proxy::LaunchOutcome) -> ProxyLaunchResult {
+    match outcome {
+        proxy::LaunchOutcome::Launched { version, app_kind } => ProxyLaunchResult {
+            launched: true,
+            switch_required: false,
+            version: Some(version.clone()),
+            product_name: Some(app_kind.display_name().to_string()),
+            running_versions: Vec::new(),
+            message: format!("已启动 {} {version}", app_kind.display_name()),
+        },
+        proxy::LaunchOutcome::SwitchRequired {
+            running_versions,
+            target_version,
+        } => ProxyLaunchResult {
+            launched: false,
+            switch_required: true,
+            version: Some(target_version.clone()),
+            product_name: None,
+            running_versions,
+            message: format!("需要关闭当前版本后切换到 {target_version}"),
         },
     }
 }
@@ -637,6 +803,7 @@ pub fn install_options_from_request(request: InstallRequest) -> Result<InstallOp
         create_shortcut: request.create_shortcut,
         register_uninstall: request.register_uninstall,
         keep_versions: request.keep_versions.max(1),
+        keep_all_versions: request.keep_all_versions,
         fetcher,
         use_current_junction: request.use_current_junction,
         local_msix,
@@ -676,7 +843,7 @@ pub fn install_event_from_msg(msg: InstallMsg) -> InstallEvent {
         InstallMsg::Done { version } => InstallEvent {
             kind: InstallEventKind::Done,
             title: "安装完成".into(),
-            detail: format!("已安装 Codex {version}"),
+            detail: format!("已安装官方桌面应用 {version}"),
             progress: Some(1.0),
             version: Some(version),
             message: None,
@@ -725,7 +892,8 @@ fn install_mode_defaults(mode: InstallMode) -> InstallModeDefaults {
         default_root: installer::default_path(mode).to_string_lossy().into_owned(),
         create_shortcut: user_managed,
         register_uninstall: user_managed,
-        keep_versions: 2,
+        keep_versions: 5,
+        keep_all_versions: false,
         use_current_junction: true,
     }
 }

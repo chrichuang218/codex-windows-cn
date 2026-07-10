@@ -28,3 +28,16 @@ fn native_splash_uses_the_chinese_product_name() {
         "native splash should not show the old reference product name"
     );
 }
+
+#[test]
+fn html_preboot_uses_the_same_assistant_brand() {
+    let html = std::fs::read_to_string("frontend/index.html").expect("frontend entry should exist");
+
+    assert!(html.contains("Codex Windows 中文助手"));
+    assert!(html.contains("安装向导"));
+    assert!(html.contains("preboot-mark"));
+    assert!(
+        !html.contains("Codex Updater"),
+        "preboot should not flash the old updater brand"
+    );
+}

@@ -114,6 +114,7 @@ fn test_config() -> Config {
         known_latest: None,
         skipped_version: None,
         keep_versions: 2,
+        keep_all_versions: false,
         fetcher: Fetcher::Direct,
         use_current_junction: true,
         register_uninstall: true,

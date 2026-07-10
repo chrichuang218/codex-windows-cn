@@ -1,6 +1,6 @@
 [package]
 name = "codex-windows-cn"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 rust-version = "1.80"
 description = "Codex Windows Chinese installer, updater, launcher and uninstaller assistant"

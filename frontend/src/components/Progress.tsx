@@ -1,16 +1,21 @@
 export function ProgressScreen({
+  brandMark,
+  compact = false,
   detail,
   indeterminate,
   progress,
   title
 }: {
+  brandMark?: string;
+  compact?: boolean;
   detail?: string;
   indeterminate: boolean;
   progress: number | null;
   title: string;
 }) {
   return (
-    <section className="screen center-screen">
+    <section className={compact ? "screen center-screen boot-progress-screen" : "screen center-screen"}>
+      {brandMark ? <div aria-hidden="true" className="assistant-mark">{brandMark}</div> : null}
       <h2>{title}</h2>
       <div
         aria-label={title}

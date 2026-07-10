@@ -13,6 +13,9 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 /// Point `<root>/versions/current` at `<root>/versions/<version>/`. If a
 /// junction (or anything else) already exists at `current`, it is removed
 /// first. Errors are non-fatal at the caller — the install is still usable
@@ -25,11 +28,18 @@ pub fn set_current(root: &Path, version: &str) -> Result<()> {
         anyhow::bail!("junction target {} does not exist", target.display());
     }
 
+    if points_to(&link, &target) {
+        return Ok(());
+    }
+
     let _ = remove(&link); // best effort; proceed even if it wasn't there
 
     #[cfg(windows)]
     {
-        let status = std::process::Command::new("cmd")
+        use std::os::windows::process::CommandExt;
+
+        let mut command = std::process::Command::new("cmd");
+        command
             .args([
                 "/c",
                 "mklink",
@@ -38,7 +48,9 @@ pub fn set_current(root: &Path, version: &str) -> Result<()> {
                 &target.to_string_lossy(),
             ])
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        command.creation_flags(CREATE_NO_WINDOW);
+        let status = command
             .status()
             .with_context(|| format!("spawning mklink for {}", link.display()))?;
         if !status.success() {
@@ -70,4 +82,56 @@ fn is_reparse_point(path: &Path) -> bool {
     std::fs::symlink_metadata(path)
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false)
+}
+
+fn points_to(link: &Path, target: &Path) -> bool {
+    let Ok(link_target) = std::fs::canonicalize(link) else {
+        return false;
+    };
+    let Ok(expected_target) = std::fs::canonicalize(target) else {
+        return false;
+    };
+
+    if cfg!(windows) {
+        link_target
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&expected_target.to_string_lossy())
+    } else {
+        link_target == expected_target
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::set_current;
+    use std::os::windows::fs::MetadataExt;
+
+    #[test]
+    fn set_current_keeps_the_existing_junction_when_the_target_is_unchanged() {
+        let root = std::env::temp_dir().join(format!(
+            "codex-windows-cn-junction-idempotent-{}",
+            std::process::id()
+        ));
+        let version = root.join("versions").join("1.2.0");
+        let current = root.join("versions").join("current");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&version).expect("create version fixture");
+
+        set_current(&root, "1.2.0").expect("create current junction");
+        let before = std::fs::symlink_metadata(&current)
+            .expect("read current junction")
+            .creation_time();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        set_current(&root, "1.2.0").expect("reuse current junction");
+        let after = std::fs::symlink_metadata(&current)
+            .expect("read current junction again")
+            .creation_time();
+
+        assert_eq!(
+            before, after,
+            "set_current should not recreate a correct junction"
+        );
+        let _ = std::fs::remove_dir(&current);
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

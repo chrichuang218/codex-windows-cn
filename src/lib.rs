@@ -19,3 +19,4 @@ pub mod splash;
 pub mod store;
 pub mod uninstall;
 pub mod updater;
+pub mod versions;

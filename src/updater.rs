@@ -32,9 +32,16 @@ pub enum UpdateDecision {
     /// Skip the check entirely (policy=Never, suppressed, or policy cooldown).
     Skipped { reason: String },
     /// Check ran; we're on the latest version.
-    UpToDate { version: String },
+    UpToDate {
+        version: String,
+        product_name: String,
+    },
     /// Check ran; a newer version exists.
-    Available { current: String, latest: String },
+    Available {
+        current: String,
+        latest: String,
+        product_name: String,
+    },
     /// Check failed — surface the error but don't block the app.
     Error(String),
 }
@@ -84,15 +91,19 @@ pub fn auto_check_will_query(cfg: &Config) -> bool {
 /// Force a check regardless of policy/suppression. Use this when the user
 /// explicitly clicks "Check for updates".
 pub fn check_now(cfg: &Config, product_id: &str) -> UpdateDecision {
-    match store::resolve_latest_version(cfg.fetcher, product_id) {
-        Ok(latest) => {
-            if version_gt(&latest, &cfg.current_version) {
+    match store::resolve_latest_product(cfg.fetcher, product_id) {
+        Ok(product) => {
+            if version_gt(&product.version, &cfg.current_version) {
                 UpdateDecision::Available {
                     current: cfg.current_version.clone(),
-                    latest,
+                    latest: product.version,
+                    product_name: product.title,
                 }
             } else {
-                UpdateDecision::UpToDate { version: latest }
+                UpdateDecision::UpToDate {
+                    version: product.version,
+                    product_name: product.title,
+                }
             }
         }
         Err(e) => UpdateDecision::Error(format!("{:#}", e)),
