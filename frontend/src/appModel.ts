@@ -4,6 +4,7 @@ import type {
   InstallModeDefaults,
   InstallerDefaults,
   LauncherUpdateAction,
+  UpdatePolicy,
   UpdateAction,
   UpdateStatus
 } from "./bridge";
@@ -48,6 +49,8 @@ export function formFromMode(defaults: InstallerDefaults, mode: InstallForm["mod
     mode: modeDefaults.mode,
     root: modeDefaults.defaultRoot,
     createShortcut: modeDefaults.createShortcut,
+    createDesktopShortcut: modeDefaults.createDesktopShortcut,
+    createAssistantDesktopShortcut: modeDefaults.createAssistantDesktopShortcut,
     registerUninstall: modeDefaults.registerUninstall,
     keepVersions: modeDefaults.keepVersions,
     keepAllVersions: modeDefaults.keepAllVersions,
@@ -128,6 +131,13 @@ export const fetcherLabels: Record<Fetcher, string> = {
   direct: "直连 Microsoft Store",
   winget: "winget",
   localFile: "本地 MSIX"
+};
+
+export const updatePolicyLabels: Record<UpdatePolicy, string> = {
+  always: "每次启动",
+  daily: "每天",
+  weekly: "每周",
+  never: "从不"
 };
 
 export const updateActionLabels: Record<Exclude<UpdateAction, "updateNow">, string> = {

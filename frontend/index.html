@@ -91,13 +91,20 @@
         width: 42px;
         height: 42px;
         place-items: center;
+        overflow: hidden;
         border: 1px solid rgba(115, 210, 198, 0.55);
-        border-radius: 7px;
-        background: #73d2c6;
-        color: #10211e;
+        border-radius: 10px;
+        padding: 2px;
+        background: rgba(115, 210, 198, 0.08);
         box-shadow: 0 10px 28px rgba(115, 210, 198, 0.14);
-        font-size: 14px;
-        font-weight: 900;
+      }
+
+      .preboot-mark img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        border-radius: 7px;
+        object-fit: cover;
       }
 
       .preboot-track {
@@ -148,7 +155,9 @@
           </header>
           <div class="preboot-divider"></div>
           <section class="preboot-main">
-            <div class="preboot-mark" aria-hidden="true">C</div>
+            <div class="preboot-mark" aria-hidden="true">
+              <img alt="" src="/chatgpt-mark.svg" />
+            </div>
             <h2>正在启动 Codex Windows 中文助手</h2>
             <div class="preboot-track"><div></div></div>
             <span>准备中</span>

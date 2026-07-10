@@ -41,6 +41,8 @@ fn installer_defaults_offer_a_recommended_user_install_path() {
     assert_eq!(user_mode.label, "当前用户");
     assert!(user_mode.default_root.ends_with(r"\Codex"));
     assert!(user_mode.create_shortcut);
+    assert!(user_mode.create_desktop_shortcut);
+    assert!(!user_mode.create_assistant_desktop_shortcut);
     assert!(user_mode.register_uninstall);
     assert_eq!(user_mode.keep_versions, 5);
     assert!(!user_mode.keep_all_versions);
@@ -53,6 +55,8 @@ fn installer_defaults_offer_a_recommended_user_install_path() {
         .expect("portable install mode should be available");
     assert_eq!(portable_mode.label, "便携模式");
     assert!(!portable_mode.create_shortcut);
+    assert!(!portable_mode.create_desktop_shortcut);
+    assert!(!portable_mode.create_assistant_desktop_shortcut);
     assert!(!portable_mode.register_uninstall);
 }
 
@@ -62,6 +66,8 @@ fn install_request_builds_installer_options_without_touching_disk() {
         mode: BridgeInstallMode::User,
         root: r"C:\Users\tester\AppData\Local\Codex".into(),
         create_shortcut: true,
+        create_desktop_shortcut: true,
+        create_assistant_desktop_shortcut: true,
         register_uninstall: true,
         keep_versions: 2,
         keep_all_versions: false,
@@ -78,6 +84,8 @@ fn install_request_builds_installer_options_without_touching_disk() {
         PathBuf::from(r"C:\Users\tester\AppData\Local\Codex")
     );
     assert!(options.create_shortcut);
+    assert!(options.create_desktop_shortcut);
+    assert!(options.create_assistant_desktop_shortcut);
     assert!(options.register_uninstall);
     assert_eq!(options.keep_versions, 2);
     assert_eq!(options.fetcher, Fetcher::Direct);

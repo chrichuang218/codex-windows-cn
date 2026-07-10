@@ -80,6 +80,7 @@ fn test_config() -> Config {
         current_version: "1.0.0".into(),
         update_policy: UpdatePolicy::Daily,
         last_check_unix: None,
+        last_launcher_check_unix: None,
         suppress_until_unix: None,
         known_latest: None,
         skipped_version: None,

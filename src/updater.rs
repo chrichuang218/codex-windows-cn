@@ -88,6 +88,36 @@ pub fn auto_check_will_query(cfg: &Config) -> bool {
     auto_check_skip_reason(cfg).is_none()
 }
 
+/// Reuse the last successful Store result while an automatic check is inside
+/// its cooldown. This keeps a known update visible without performing a new
+/// network request.
+pub fn cached_update_decision(cfg: &Config, product_name: &str) -> Option<UpdateDecision> {
+    if cfg.update_policy == UpdatePolicy::Never {
+        return None;
+    }
+    if cfg
+        .suppress_until_unix
+        .is_some_and(|until| now_unix() < until)
+    {
+        return None;
+    }
+    let latest = cfg.known_latest.as_ref()?;
+    if cfg.skipped_version.as_deref() == Some(latest.as_str()) {
+        return None;
+    }
+    if version_gt(latest, &cfg.current_version) {
+        return Some(UpdateDecision::Available {
+            current: cfg.current_version.clone(),
+            latest: latest.clone(),
+            product_name: product_name.to_string(),
+        });
+    }
+    Some(UpdateDecision::UpToDate {
+        version: cfg.current_version.clone(),
+        product_name: product_name.to_string(),
+    })
+}
+
 /// Force a check regardless of policy/suppression. Use this when the user
 /// explicitly clicks "Check for updates".
 pub fn check_now(cfg: &Config, product_id: &str) -> UpdateDecision {
@@ -143,6 +173,17 @@ pub fn apply_defer(cfg: &mut Config, choice: DeferChoice, latest: &str) {
 pub fn record_check(cfg: &mut Config, latest: &str) {
     cfg.last_check_unix = Some(now_unix());
     cfg.known_latest = Some(latest.to_string());
+}
+
+/// Record an automatic check attempt so cooldown policies also apply after an
+/// available update or a transient error.
+pub fn record_auto_check(cfg: &mut Config, decision: &UpdateDecision) {
+    cfg.last_check_unix = Some(now_unix());
+    match decision {
+        UpdateDecision::Available { latest, .. } => cfg.known_latest = Some(latest.clone()),
+        UpdateDecision::UpToDate { version, .. } => cfg.known_latest = Some(version.clone()),
+        UpdateDecision::Skipped { .. } | UpdateDecision::Error(_) => {}
+    }
 }
 
 // -- Launcher self-update check -------------------------------------------
@@ -211,9 +252,8 @@ pub fn pending_launcher_from_state(cfg: &Config) -> Option<LauncherDecision> {
 }
 
 /// Automatic launcher-update check. Honors the shared `update_policy` and
-/// `last_check_unix` cooldown, plus launcher-specific snooze and
-/// skip-this-version. Doesn't itself update `last_check_unix` — caller is
-/// expected to record after both checks complete.
+/// its own cooldown timestamp, plus launcher-specific snooze and
+/// skip-this-version.
 pub fn check_launcher_auto(cfg: &Config) -> LauncherDecision {
     if let Some(reason) = launcher_auto_check_skip_reason(cfg) {
         return LauncherDecision::Skipped { reason };
@@ -358,7 +398,7 @@ pub fn apply_launcher_defer(cfg: &mut Config, choice: LauncherDeferChoice, lates
 /// the latest launcher version cache; errors only advance the cooldown so a
 /// transient GitHub limit does not get hammered on every app launch.
 pub fn record_launcher_check(cfg: &mut Config, decision: &LauncherDecision) {
-    cfg.last_check_unix = Some(now_unix());
+    cfg.last_launcher_check_unix = Some(now_unix());
     match decision {
         LauncherDecision::Available { latest, .. } => {
             cfg.known_latest_launcher = Some(latest.clone());
@@ -410,7 +450,7 @@ fn launcher_auto_check_skip_reason(cfg: &Config) -> Option<String> {
             return Some(format!("launcher prompt suppressed for ~{days}d"));
         }
     }
-    if let Some(last) = cfg.last_check_unix {
+    if let Some(last) = cfg.last_launcher_check_unix {
         let cooldown = policy_cooldown_secs(cfg.update_policy);
         if now.saturating_sub(last) < cooldown {
             return Some("within cooldown".into());
@@ -442,6 +482,7 @@ fn _fetcher_check(f: Fetcher) -> Fetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::InstallMode;
 
     #[test]
     fn version_compare() {
@@ -468,5 +509,81 @@ mod tests {
             Some("v0.2.1")
         );
         assert_eq!(tag_from_latest_release_location("/releases/latest"), None);
+    }
+
+    #[test]
+    fn automatic_check_frequency_honors_policy_and_cooldown() {
+        let mut cfg = test_config();
+
+        cfg.update_policy = UpdatePolicy::Never;
+        assert!(!auto_check_will_query(&cfg));
+
+        cfg.update_policy = UpdatePolicy::Daily;
+        cfg.last_check_unix = Some(u64::MAX);
+        assert!(!auto_check_will_query(&cfg));
+
+        cfg.update_policy = UpdatePolicy::Weekly;
+        assert!(!auto_check_will_query(&cfg));
+
+        cfg.update_policy = UpdatePolicy::Always;
+        assert!(auto_check_will_query(&cfg));
+    }
+
+    #[test]
+    fn cached_available_update_is_reused_during_cooldown() {
+        let mut cfg = test_config();
+        cfg.known_latest = Some("2.0.0".into());
+        cfg.last_check_unix = Some(u64::MAX);
+
+        assert!(matches!(
+            cached_update_decision(&cfg, "ChatGPT"),
+            Some(UpdateDecision::Available {
+                current,
+                latest,
+                product_name,
+            }) if current == "1.0.0" && latest == "2.0.0" && product_name == "ChatGPT"
+        ));
+    }
+
+    #[test]
+    fn app_and_launcher_cooldowns_are_independent() {
+        let mut cfg = test_config();
+        cfg.last_check_unix = Some(u64::MAX);
+        assert!(!auto_check_will_query(&cfg));
+        assert!(launcher_auto_check_will_query(&cfg));
+
+        cfg.last_check_unix = None;
+        cfg.last_launcher_check_unix = Some(u64::MAX);
+        assert!(auto_check_will_query(&cfg));
+        assert!(!launcher_auto_check_will_query(&cfg));
+
+        cfg.last_check_unix = None;
+        cfg.last_launcher_check_unix = None;
+        record_auto_check(&mut cfg, &UpdateDecision::Error("offline".into()));
+        assert!(launcher_auto_check_will_query(&cfg));
+        record_launcher_check(&mut cfg, &LauncherDecision::Error("offline".into()));
+        assert!(!auto_check_will_query(&cfg));
+        assert!(!launcher_auto_check_will_query(&cfg));
+    }
+
+    fn test_config() -> Config {
+        Config {
+            install_mode: InstallMode::User,
+            current_version: "1.0.0".into(),
+            update_policy: UpdatePolicy::Daily,
+            last_check_unix: None,
+            last_launcher_check_unix: None,
+            suppress_until_unix: None,
+            known_latest: None,
+            skipped_version: None,
+            keep_versions: 2,
+            keep_all_versions: false,
+            fetcher: Fetcher::Direct,
+            use_current_junction: true,
+            register_uninstall: true,
+            known_latest_launcher: None,
+            skipped_launcher_version: None,
+            launcher_suppress_until_unix: None,
+        }
     }
 }

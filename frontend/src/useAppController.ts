@@ -142,6 +142,7 @@ export function useAppController(bridge: AppBridge) {
   const [installState, setInstallState] = useState<
     "idle" | "starting" | "running" | "cancelling"
   >("idle");
+  const [installCancellable, setInstallCancellable] = useState(true);
   const [installEvent, setInstallEvent] = useState<InstallEvent | null>(null);
   const [installFailure, setInstallFailure] = useState<string | null>(null);
   const [launchState, setLaunchState] = useState<"idle" | "launching">("idle");
@@ -458,15 +459,18 @@ export function useAppController(bridge: AppBridge) {
     }
 
     setInstallState("starting");
+    setInstallCancellable(installForm.mode !== "system");
     setInstallEvent(initialInstallEvent(installForm.fetcher));
     setInstallFailure(null);
     setInstallerStep("progress");
 
     try {
-      await bridge.startInstall({
+      const result = await bridge.startInstall({
         mode: installForm.mode,
         root: installForm.root,
         createShortcut: installForm.createShortcut,
+        createDesktopShortcut: installForm.createDesktopShortcut,
+        createAssistantDesktopShortcut: installForm.createAssistantDesktopShortcut,
         registerUninstall: installForm.registerUninstall,
         keepVersions: installForm.keepVersions,
         keepAllVersions: installForm.keepAllVersions,
@@ -474,6 +478,7 @@ export function useAppController(bridge: AppBridge) {
         useCurrentJunction: installForm.useCurrentJunction,
         localMsix: null
       });
+      setInstallCancellable(result.cancellable);
       setInstallState("running");
     } catch (cause) {
       setInstallState("idle");
@@ -637,6 +642,7 @@ export function useAppController(bridge: AppBridge) {
     installEvent,
     installFailure,
     installForm,
+    installCancellable,
     installProgress: toPercent(installEvent?.progress),
     installState,
     installed,

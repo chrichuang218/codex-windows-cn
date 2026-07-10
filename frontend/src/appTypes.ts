@@ -21,6 +21,8 @@ export type InstallForm = {
   mode: InstallMode;
   root: string;
   createShortcut: boolean;
+  createDesktopShortcut: boolean;
+  createAssistantDesktopShortcut: boolean;
   registerUninstall: boolean;
   keepVersions: number;
   keepAllVersions: boolean;

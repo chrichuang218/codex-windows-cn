@@ -5,6 +5,7 @@ import {
   modeSubtitle
 } from "../../appModel";
 import type { ReadyAppController } from "../../useAppController";
+import { AssistantMark } from "../../components/AssistantMark";
 import { ProductShell } from "../../components/Shell";
 import { ProgressScreen } from "../../components/Progress";
 
@@ -41,7 +42,7 @@ export function InstallerWizard({ controller }: { controller: ReadyAppController
     >
       {installerStep === "welcome" ? (
         <section className="screen welcome-screen center-screen">
-          <div aria-hidden="true" className="assistant-mark">C</div>
+          <AssistantMark label="ChatGPT 标志" />
           <div className="welcome-copy">
             <p className="eyebrow">{status.v1Boundary}</p>
             <h2>欢迎使用 Codex Windows 中文助手</h2>
@@ -97,6 +98,26 @@ export function InstallerWizard({ controller }: { controller: ReadyAppController
                 type="checkbox"
               />
               创建开始菜单快捷方式
+            </label>
+            <label>
+              <input
+                checked={installForm.createDesktopShortcut}
+                onChange={(event) =>
+                  patchInstallForm({ createDesktopShortcut: event.target.checked })
+                }
+                type="checkbox"
+              />
+              创建 ChatGPT 桌面快捷方式
+            </label>
+            <label>
+              <input
+                checked={installForm.createAssistantDesktopShortcut}
+                onChange={(event) =>
+                  patchInstallForm({ createAssistantDesktopShortcut: event.target.checked })
+                }
+                type="checkbox"
+              />
+              创建中文助手桌面快捷方式
             </label>
             <label>
               <input
@@ -180,6 +201,7 @@ export function InstallerWizard({ controller }: { controller: ReadyAppController
 function InstallerFooter({ controller }: { controller: ReadyAppController }) {
   const {
     cancelInstall,
+    installCancellable,
     installForm,
     installerStep,
     installState,
@@ -251,6 +273,9 @@ function InstallerFooter({ controller }: { controller: ReadyAppController }) {
   }
 
   if (installerStep === "progress") {
+    if (!installCancellable) {
+      return <span className="footer-note">管理员安装进行中，完成前请勿关闭窗口</span>;
+    }
     return (
       <>
         <span />

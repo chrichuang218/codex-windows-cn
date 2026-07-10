@@ -28,7 +28,7 @@
 
 use crate::cleanup::{self, CleanupReport};
 use crate::config::{Config, InstallMode, CONFIG_FILENAME};
-use crate::{dialogs, elevate, junction, proxy, registry, safety, shortcut};
+use crate::{dialogs, elevate, installer, junction, proxy, registry, safety};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -140,11 +140,28 @@ pub fn run_worker(ctx: UninstallContext, on_msg: impl Fn(UninstallMsg)) {
 
     // --- 3. destructive actions -------------------------------------------
     on_msg(UninstallMsg::Phase {
-        phase: "Removing Start Menu shortcut".into(),
+        phase: "Removing shortcuts".into(),
         detail: "".into(),
     });
-    if let Some(link) = shortcut::link_path(ctx.cfg.install_mode).ok().flatten() {
-        let _ = shortcut::remove(&link);
+    if let Err(cause) = installer::remove_start_menu_shortcut(&ctx.root, ctx.cfg.install_mode) {
+        on_msg(UninstallMsg::Error(format!(
+            "移除开始菜单快捷方式失败：{cause:#}"
+        )));
+        return;
+    }
+    if let Err(cause) = installer::remove_desktop_shortcut(&ctx.root, ctx.cfg.install_mode) {
+        on_msg(UninstallMsg::Error(format!(
+            "移除 ChatGPT 桌面快捷方式失败：{cause:#}"
+        )));
+        return;
+    }
+    if let Err(cause) =
+        installer::remove_assistant_desktop_shortcut(&ctx.root, ctx.cfg.install_mode)
+    {
+        on_msg(UninstallMsg::Error(format!(
+            "移除中文助手桌面快捷方式失败：{cause:#}"
+        )));
+        return;
     }
 
     on_msg(UninstallMsg::Phase {

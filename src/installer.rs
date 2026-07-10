@@ -14,6 +14,7 @@
 //! live in their own modules alongside the rest of the Windows-integration goo.
 
 use crate::config::{Config, InstallMode, UpdatePolicy};
+use crate::dialogs;
 use crate::extract;
 use crate::junction;
 use crate::registry;
@@ -34,6 +35,8 @@ pub struct InstallOptions {
     pub mode: InstallMode,
     pub root: PathBuf,
     pub create_shortcut: bool,
+    pub create_desktop_shortcut: bool,
+    pub create_assistant_desktop_shortcut: bool,
     /// Write the Add/Remove Programs registry entry so the user can
     /// uninstall via Windows Settings → Apps. Off by default for Portable.
     pub register_uninstall: bool,
@@ -82,7 +85,7 @@ pub fn default_path(mode: InstallMode) -> PathBuf {
 /// with phase/progress updates AND the final Done/Error — callers should
 /// treat a Done or Error as the last message they'll ever see.
 pub fn run(opts: InstallOptions, on_msg: impl Fn(InstallMsg) + Send + 'static) {
-    match run_inner(&opts, &on_msg, None) {
+    match run_inner(&opts, &on_msg, None, PostWorkMode::Background) {
         Ok(version) => on_msg(InstallMsg::Done { version }),
         Err(e) => on_msg(InstallMsg::Error(format!("{:#}", e))),
     }
@@ -93,10 +96,21 @@ pub fn run_cancellable(
     cancel: Arc<AtomicBool>,
     on_msg: impl Fn(InstallMsg) + Send + 'static,
 ) {
-    match run_inner(&opts, &on_msg, Some(cancel.as_ref())) {
+    match run_inner(
+        &opts,
+        &on_msg,
+        Some(cancel.as_ref()),
+        PostWorkMode::Background,
+    ) {
         Ok(version) => on_msg(InstallMsg::Done { version }),
         Err(e) => on_msg(InstallMsg::Error(format!("{:#}", e))),
     }
+}
+
+/// Run a System install inside the one-shot elevated helper. Post-install
+/// Windows integration must finish before the helper process exits.
+pub fn run_elevated(opts: InstallOptions) -> Result<String> {
+    run_inner(&opts, &|_| {}, None, PostWorkMode::Inline)
 }
 
 /// Update an existing install in-place. Loads `<root>/updater.json`, downloads
@@ -104,13 +118,29 @@ pub fn run_cancellable(
 /// and `last_check_unix`, then prunes. Does NOT replace the launcher exe
 /// (we're running from it). Does NOT change install_mode / keep_versions / etc.
 pub fn update(root: std::path::PathBuf, on_msg: impl Fn(InstallMsg) + Send + 'static) {
-    match update_inner(&root, &on_msg) {
+    match update_inner(&root, &on_msg, PostWorkMode::Background) {
         Ok(version) => on_msg(InstallMsg::Done { version }),
         Err(e) => on_msg(InstallMsg::Error(format!("{:#}", e))),
     }
 }
 
-fn update_inner(root: &Path, on_msg: &dyn Fn(InstallMsg)) -> Result<String> {
+/// Run a System update inside the one-shot elevated helper. Post-update
+/// Windows integration must finish before the helper process exits.
+pub fn update_elevated(root: PathBuf) -> Result<String> {
+    update_inner(&root, &|_| {}, PostWorkMode::Inline)
+}
+
+#[derive(Clone, Copy)]
+enum PostWorkMode {
+    Background,
+    Inline,
+}
+
+fn update_inner(
+    root: &Path,
+    on_msg: &dyn Fn(InstallMsg),
+    post_work_mode: PostWorkMode,
+) -> Result<String> {
     // load_runtime, not load — the per-user state overlay (System installs)
     // holds runtime-current values like update_policy, skipped_version,
     // launcher_suppress_until_unix. save_install below clears the overlay,
@@ -162,6 +192,11 @@ fn update_inner(root: &Path, on_msg: &dyn Fn(InstallMsg)) -> Result<String> {
 
     emit_progress_detail(on_msg, "Finalizing", "正在写入更新配置。", None);
 
+    // Reload just before committing so settings changed while the large
+    // download/extract was running are preserved instead of being overwritten
+    // by the snapshot loaded at update start.
+    cfg = Config::load_runtime(root)
+        .with_context(|| format!("reloading runtime config at {}", root.display()))?;
     cfg.current_version = result.version.clone();
     cfg.known_latest = Some(result.version.clone());
     cfg.suppress_until_unix = None;
@@ -191,7 +226,12 @@ fn update_inner(root: &Path, on_msg: &dyn Fn(InstallMsg)) -> Result<String> {
         use_current_junction: cfg.use_current_junction,
         msix_path: result.msix_path.clone(),
     };
-    std::thread::spawn(move || run_post_update_work(post_update));
+    match post_work_mode {
+        PostWorkMode::Background => {
+            std::thread::spawn(move || run_post_update_work(post_update));
+        }
+        PostWorkMode::Inline => run_post_update_work(post_update),
+    }
 
     Ok(result.version)
 }
@@ -200,6 +240,7 @@ fn run_inner(
     opts: &InstallOptions,
     on_msg: &dyn Fn(InstallMsg),
     cancel: Option<&AtomicBool>,
+    post_work_mode: PostWorkMode,
 ) -> Result<String> {
     check_cancel(cancel)?;
     std::fs::create_dir_all(&opts.root)
@@ -270,6 +311,7 @@ fn run_inner(
         current_version: result.version.clone(),
         update_policy: UpdatePolicy::default(),
         last_check_unix: None,
+        last_launcher_check_unix: None,
         suppress_until_unix: None,
         known_latest: Some(result.version.clone()),
         skipped_version: None,
@@ -303,13 +345,20 @@ fn run_inner(
         version: result.version.clone(),
         mode: opts.mode,
         create_shortcut: opts.create_shortcut,
+        create_desktop_shortcut: opts.create_desktop_shortcut,
+        create_assistant_desktop_shortcut: opts.create_assistant_desktop_shortcut,
         register_uninstall: opts.register_uninstall,
         keep_versions: cfg.keep_versions,
         keep_all_versions: cfg.keep_all_versions,
         use_current_junction: cfg.use_current_junction,
         msix_path: result.msix_path.clone(),
     };
-    std::thread::spawn(move || run_post_install_work(post_install));
+    match post_work_mode {
+        PostWorkMode::Background => {
+            std::thread::spawn(move || run_post_install_work(post_install));
+        }
+        PostWorkMode::Inline => run_post_install_work(post_install),
+    }
 
     Ok(result.version)
 }
@@ -319,6 +368,8 @@ struct PostInstallWork {
     version: String,
     mode: InstallMode,
     create_shortcut: bool,
+    create_desktop_shortcut: bool,
+    create_assistant_desktop_shortcut: bool,
     register_uninstall: bool,
     keep_versions: u32,
     keep_all_versions: bool,
@@ -333,8 +384,29 @@ fn run_post_install_work(work: PostInstallWork) {
         }
     }
     if work.create_shortcut {
-        if let Err(e) = write_shortcut(&work.root, work.mode, &work.version) {
+        if let Err(e) = write_start_menu_shortcut(&work.root, work.mode) {
             eprintln!("warn: shortcut: {e:#}");
+            dialogs::error(&format!(
+                "创建中文助手开始菜单快捷方式失败：{e:#}\n\n可重新运行安装程序后重试。"
+            ));
+        }
+    }
+    if work.create_desktop_shortcut {
+        if let Err(e) =
+            create_or_update_desktop_shortcut(&work.root, work.mode, work.use_current_junction)
+        {
+            eprintln!("warn: desktop shortcut: {e:#}");
+            dialogs::error(&format!(
+                "创建 ChatGPT 桌面快捷方式失败：{e:#}\n\n可稍后在中文助手的设置页重试。"
+            ));
+        }
+    }
+    if work.create_assistant_desktop_shortcut {
+        if let Err(e) = create_or_update_assistant_desktop_shortcut(&work.root, work.mode) {
+            eprintln!("warn: assistant desktop shortcut: {e:#}");
+            dialogs::error(&format!(
+                "创建中文助手桌面快捷方式失败：{e:#}\n\n可稍后在中文助手的设置页重试。"
+            ));
         }
     }
     if work.register_uninstall {
@@ -367,11 +439,57 @@ fn run_post_update_work(work: PostUpdateWork) {
         let _ = junction::remove(&junction_link);
     }
 
-    if let Ok(Some(link)) = shortcut::link_path(work.mode) {
-        if link.exists() {
-            if let Err(e) = write_shortcut(&work.root, work.mode, &work.version) {
+    match start_menu_shortcut_exists(&work.root, work.mode) {
+        Ok(true) => {
+            if let Err(e) = write_start_menu_shortcut(&work.root, work.mode) {
                 eprintln!("warn: shortcut refresh: {e:#}");
+                dialogs::error(&format!(
+                    "更新中文助手开始菜单快捷方式失败：{e:#}\n\n可重新运行安装程序后重试。"
+                ));
             }
+        }
+        Ok(false) => {}
+        Err(e) => {
+            eprintln!("warn: start menu shortcut inspection: {e:#}");
+            dialogs::error(&format!(
+                "检查中文助手开始菜单快捷方式失败：{e:#}\n\n可重新运行安装程序后重试。"
+            ));
+        }
+    }
+    match desktop_shortcut_exists(&work.root, work.mode) {
+        Ok(true) => {
+            if let Err(e) =
+                create_or_update_desktop_shortcut(&work.root, work.mode, work.use_current_junction)
+            {
+                eprintln!("warn: desktop shortcut refresh: {e:#}");
+                dialogs::error(&format!(
+                    "更新 ChatGPT 桌面快捷方式失败：{e:#}\n\n可在中文助手的设置页重新创建。"
+                ));
+            }
+        }
+        Ok(false) => {}
+        Err(e) => {
+            eprintln!("warn: desktop shortcut inspection: {e:#}");
+            dialogs::error(&format!(
+                "检查 ChatGPT 桌面快捷方式失败：{e:#}\n\n可在中文助手的设置页重新创建。"
+            ));
+        }
+    }
+    match assistant_desktop_shortcut_exists(&work.root, work.mode) {
+        Ok(true) => {
+            if let Err(e) = create_or_update_assistant_desktop_shortcut(&work.root, work.mode) {
+                eprintln!("warn: assistant desktop shortcut refresh: {e:#}");
+                dialogs::error(&format!(
+                    "更新中文助手桌面快捷方式失败：{e:#}\n\n可在中文助手的设置页重新创建。"
+                ));
+            }
+        }
+        Ok(false) => {}
+        Err(e) => {
+            eprintln!("warn: assistant desktop shortcut inspection: {e:#}");
+            dialogs::error(&format!(
+                "检查中文助手桌面快捷方式失败：{e:#}\n\n可在中文助手的设置页重新创建。"
+            ));
         }
     }
     if work.register_uninstall {
@@ -426,13 +544,147 @@ fn same_file(a: &Path, b: &Path) -> bool {
 
 /// (Re)create the Start Menu `.lnk` with the launcher's embedded icon.
 /// No-op for Portable mode (link_path returns None).
-fn write_shortcut(root: &Path, mode: InstallMode, _version: &str) -> Result<()> {
+fn write_start_menu_shortcut(root: &Path, mode: InstallMode) -> Result<()> {
     let Some(link) = shortcut::link_path(mode)? else {
         return Ok(());
     };
+    let legacy_link = shortcut::legacy_link_path(mode)?;
     let target = root.join("codex-launcher.exe");
+    if link.exists() && !shortcut::is_owned(&link, &target, "")? {
+        anyhow::bail!(
+            "开始菜单已存在其他来源的 Codex Windows 中文助手快捷方式，为避免覆盖已保留原文件"
+        );
+    }
+    let remove_legacy = match legacy_link.as_deref() {
+        Some(path) => shortcut::is_owned(path, &target, "")?,
+        None => false,
+    };
     let icon = target.clone();
-    shortcut::create_or_update(&link, &target, &icon, "Codex Windows 中文助手", root)
+    shortcut::create_or_update(&link, &target, &icon, "Codex Windows 中文助手", root, "")?;
+    if remove_legacy {
+        if let Some(legacy_link) = legacy_link {
+            shortcut::remove(&legacy_link)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn start_menu_shortcut_exists(root: &Path, mode: InstallMode) -> Result<bool> {
+    let target = root.join("codex-launcher.exe");
+    for link in [
+        shortcut::link_path(mode)?,
+        shortcut::legacy_link_path(mode)?,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if shortcut::is_owned(&link, &target, "")? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub fn remove_start_menu_shortcut(root: &Path, mode: InstallMode) -> Result<()> {
+    let target = root.join("codex-launcher.exe");
+    for link in [
+        shortcut::link_path(mode)?,
+        shortcut::legacy_link_path(mode)?,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if shortcut::is_owned(&link, &target, "")? {
+            shortcut::remove(&link)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn create_or_update_desktop_shortcut(
+    root: &Path,
+    mode: InstallMode,
+    use_current_junction: bool,
+) -> Result<()> {
+    let link = shortcut::desktop_link_path(mode)?;
+    let legacy_link = shortcut::legacy_desktop_link_path(mode)?;
+    let target = root.join("codex-launcher.exe");
+    if link.exists() && !shortcut::is_owned(&link, &target, "--launch-latest")? {
+        anyhow::bail!("桌面已存在其他来源的 ChatGPT 快捷方式，为避免覆盖已保留原文件");
+    }
+    let remove_legacy = shortcut::is_owned(&legacy_link, &target, "--launch-latest")?;
+    let launch_target = crate::versions::resolve_launch_target(root, use_current_junction, None)?;
+    let description = format!("启动最新 {}", launch_target.app_kind.display_name());
+    shortcut::create_or_update(
+        &link,
+        &target,
+        &launch_target.executable,
+        &description,
+        root,
+        "--launch-latest",
+    )?;
+    if remove_legacy {
+        shortcut::remove(&legacy_link)?;
+    }
+    Ok(())
+}
+
+pub fn desktop_shortcut_exists(root: &Path, mode: InstallMode) -> Result<bool> {
+    let target = root.join("codex-launcher.exe");
+    for link in [
+        shortcut::desktop_link_path(mode)?,
+        shortcut::legacy_desktop_link_path(mode)?,
+    ] {
+        if shortcut::is_owned(&link, &target, "--launch-latest")? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub fn remove_desktop_shortcut(root: &Path, mode: InstallMode) -> Result<()> {
+    let target = root.join("codex-launcher.exe");
+    for link in [
+        shortcut::desktop_link_path(mode)?,
+        shortcut::legacy_desktop_link_path(mode)?,
+    ] {
+        if shortcut::is_owned(&link, &target, "--launch-latest")? {
+            shortcut::remove(&link)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn create_or_update_assistant_desktop_shortcut(root: &Path, mode: InstallMode) -> Result<()> {
+    let link = shortcut::assistant_desktop_link_path(mode)?;
+    let target = root.join("codex-launcher.exe");
+    if link.exists() && !shortcut::is_owned(&link, &target, "")? {
+        anyhow::bail!(
+            "桌面已存在其他来源的 Codex Windows 中文助手快捷方式，为避免覆盖已保留原文件"
+        );
+    }
+    shortcut::create_or_update(
+        &link,
+        &target,
+        &target,
+        "打开 Codex Windows 中文助手",
+        root,
+        "",
+    )
+}
+
+pub fn assistant_desktop_shortcut_exists(root: &Path, mode: InstallMode) -> Result<bool> {
+    let target = root.join("codex-launcher.exe");
+    shortcut::is_owned(&shortcut::assistant_desktop_link_path(mode)?, &target, "")
+}
+
+pub fn remove_assistant_desktop_shortcut(root: &Path, mode: InstallMode) -> Result<()> {
+    let link = shortcut::assistant_desktop_link_path(mode)?;
+    let target = root.join("codex-launcher.exe");
+    if shortcut::is_owned(&link, &target, "")? {
+        shortcut::remove(&link)?;
+    }
+    Ok(())
 }
 
 /// (Re)write the Add/Remove Programs registry entry for the current install.

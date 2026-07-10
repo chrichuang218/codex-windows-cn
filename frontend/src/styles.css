@@ -184,13 +184,21 @@ button {
   width: 42px;
   height: 42px;
   place-items: center;
+  overflow: hidden;
   border: 1px solid rgba(115, 210, 198, 0.55);
-  border-radius: 7px;
-  background: var(--accent);
-  color: var(--accent-ink);
+  border-radius: 10px;
+  padding: 2px;
+  background: rgba(115, 210, 198, 0.08);
   box-shadow: 0 10px 28px rgba(115, 210, 198, 0.14);
-  font-size: 14px;
-  font-weight: 900;
+}
+
+.assistant-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 7px;
+  object-fit: cover;
+  user-select: none;
 }
 
 .welcome-copy {
@@ -910,18 +918,13 @@ a:focus-visible {
 }
 
 .rail-brand {
-  display: grid;
-  place-items: center;
   width: 38px;
   height: 38px;
   margin: 0 auto 22px;
   border: 1px solid rgba(118, 220, 205, 0.35);
-  border-radius: 8px;
-  color: var(--console-mint-ink);
-  background: var(--console-mint);
+  border-radius: 10px;
+  background: rgba(118, 220, 205, 0.08);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
-  font-size: 15px;
-  font-weight: 900;
 }
 
 .console-rail nav {
@@ -1231,6 +1234,18 @@ a:focus-visible {
   background: rgba(255, 127, 145, 0.09);
 }
 
+.button.subtle {
+  border: 1px solid var(--console-line);
+  color: var(--console-muted);
+  background: transparent;
+}
+
+.button.subtle:hover:not(:disabled) {
+  border-color: var(--console-line-strong);
+  color: var(--console-soft);
+  background: rgba(255, 255, 255, 0.025);
+}
+
 .button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
@@ -1433,8 +1448,14 @@ a:focus-visible {
 
 .settings-copy span {
   overflow-wrap: anywhere;
+  color: var(--console-soft);
+  font-size: 11px;
+}
+
+.settings-detail {
+  width: max-content;
   color: var(--console-muted);
-  font-size: 10px;
+  font-size: 9px;
 }
 
 .segmented {
@@ -1484,8 +1505,40 @@ a:focus-visible {
 }
 
 .install-details {
-  grid-template-columns: 1.5fr 0.8fr 0.8fr;
+  grid-template-columns: 1.5fr 0.8fr 0.8fr 0.8fr;
   align-items: start;
+}
+
+.settings-policy-select {
+  width: 100%;
+  max-width: 120px;
+  height: 29px;
+  border: 1px solid var(--console-line-strong);
+  border-radius: 5px;
+  padding: 0 7px;
+  color: var(--console-text);
+  background: var(--console-surface-strong);
+  outline: none;
+  font-size: 10px;
+}
+
+.shortcut-setting {
+  grid-template-columns: minmax(220px, 1fr) auto;
+}
+
+.shortcut-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.shortcut-feedback {
+  margin: 2px 0 0;
+  color: var(--console-mint);
+  font-size: 10px;
+}
+
+.shortcut-feedback.error {
+  color: var(--console-coral);
 }
 
 .maintenance-strip {
@@ -1712,5 +1765,13 @@ a:focus-visible {
 
   .install-details {
     grid-template-columns: 1fr;
+  }
+
+  .shortcut-setting {
+    grid-template-columns: 1fr;
+  }
+
+  .shortcut-actions {
+    justify-content: flex-end;
   }
 }

@@ -1,4 +1,4 @@
-use crate::config::{Config, InstallMode};
+use crate::config::{Config, InstallMode, UpdatePolicy};
 use crate::installer::{self, InstallMsg, InstallOptions};
 use crate::launcher_update::LauncherUpdateMsg;
 use crate::proxy;
@@ -44,6 +44,8 @@ pub struct InstallModeDefaults {
     pub label: &'static str,
     pub default_root: String,
     pub create_shortcut: bool,
+    pub create_desktop_shortcut: bool,
+    pub create_assistant_desktop_shortcut: bool,
     pub register_uninstall: bool,
     pub keep_versions: u32,
     pub keep_all_versions: bool,
@@ -66,12 +68,15 @@ pub enum BridgeFetcher {
     LocalFile,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallRequest {
     pub mode: BridgeInstallMode,
     pub root: String,
     pub create_shortcut: bool,
+    pub create_desktop_shortcut: bool,
+    #[serde(default)]
+    pub create_assistant_desktop_shortcut: bool,
     pub register_uninstall: bool,
     pub keep_versions: u32,
     pub keep_all_versions: bool,
@@ -84,6 +89,7 @@ pub struct InstallRequest {
 #[serde(rename_all = "camelCase")]
 pub struct InstallStart {
     pub accepted: bool,
+    pub cancellable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -167,21 +173,33 @@ pub struct VersionInventory {
     pub running_versions: Vec<String>,
     pub keep_versions: u32,
     pub keep_all_versions: bool,
+    pub update_policy: UpdatePolicy,
     pub fetcher: BridgeFetcher,
     pub use_current_junction: bool,
+    pub desktop_shortcut_exists: bool,
+    pub assistant_desktop_shortcut_exists: bool,
     pub versions: Vec<InstalledVersionStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RetentionSettingsRequest {
+pub struct VersionSettingsRequest {
     pub keep_versions: u32,
     pub keep_all_versions: bool,
+    pub update_policy: UpdatePolicy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionActionResult {
+    pub applied: bool,
+    pub message: String,
+    pub inventory: VersionInventory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopShortcutActionResult {
     pub applied: bool,
     pub message: String,
     pub inventory: VersionInventory,
@@ -381,10 +399,6 @@ pub fn app_status() -> AppStatus {
     }
 }
 
-pub fn check_update_status(cfg: &Config) -> UpdateStatus {
-    update_status_from_decision(updater::check_now(cfg, crate::store::PRODUCT_ID_CODEX))
-}
-
 pub fn update_status_from_decision(decision: UpdateDecision) -> UpdateStatus {
     match decision {
         UpdateDecision::Available {
@@ -501,7 +515,7 @@ pub fn uninstall_confirmation(root: &Path) -> UninstallConfirmation {
             "已安装的桌面应用版本".into(),
             "下载缓存".into(),
             "启动器配置".into(),
-            "开始菜单快捷方式".into(),
+            "开始菜单和桌面快捷方式".into(),
             "Windows 卸载入口".into(),
         ],
         preserve_items: vec!["Codex/ChatGPT 登录数据".into(), "日志和诊断信息".into()],
@@ -732,28 +746,37 @@ pub fn version_inventory(root: &Path, cfg: &Config) -> anyhow::Result<VersionInv
         running_versions,
         keep_versions: cfg.keep_versions.max(1),
         keep_all_versions: cfg.keep_all_versions,
+        update_policy: cfg.update_policy,
         fetcher: bridge_fetcher(cfg.fetcher),
         use_current_junction: cfg.use_current_junction,
+        desktop_shortcut_exists: crate::installer::desktop_shortcut_exists(root, cfg.install_mode)?,
+        assistant_desktop_shortcut_exists: crate::installer::assistant_desktop_shortcut_exists(
+            root,
+            cfg.install_mode,
+        )?,
         versions,
     })
 }
 
-pub fn persist_retention_settings(
+pub fn persist_version_settings(
     root: &Path,
     cfg: &mut Config,
-    request: RetentionSettingsRequest,
+    request: VersionSettingsRequest,
 ) -> anyhow::Result<VersionActionResult> {
+    if matches!(cfg.update_policy, UpdatePolicy::Never)
+        && !matches!(request.update_policy, UpdatePolicy::Never)
+    {
+        cfg.suppress_until_unix = None;
+        cfg.launcher_suppress_until_unix = None;
+    }
     cfg.keep_versions = request.keep_versions.max(1);
     cfg.keep_all_versions = request.keep_all_versions;
+    cfg.update_policy = request.update_policy;
     cfg.save_runtime(root)?;
     let inventory = version_inventory(root, cfg)?;
     Ok(VersionActionResult {
         applied: true,
-        message: if cfg.keep_all_versions {
-            "已设置为全部保留".into()
-        } else {
-            format!("将自动保留最近 {} 个版本", cfg.keep_versions)
-        },
+        message: "版本策略已保存".into(),
         inventory,
     })
 }
@@ -801,6 +824,8 @@ pub fn install_options_from_request(request: InstallRequest) -> Result<InstallOp
         mode: core_install_mode(request.mode),
         root: PathBuf::from(root),
         create_shortcut: request.create_shortcut,
+        create_desktop_shortcut: request.create_desktop_shortcut,
+        create_assistant_desktop_shortcut: request.create_assistant_desktop_shortcut,
         register_uninstall: request.register_uninstall,
         keep_versions: request.keep_versions.max(1),
         keep_all_versions: request.keep_all_versions,
@@ -891,6 +916,8 @@ fn install_mode_defaults(mode: InstallMode) -> InstallModeDefaults {
         label: install_mode_label(mode),
         default_root: installer::default_path(mode).to_string_lossy().into_owned(),
         create_shortcut: user_managed,
+        create_desktop_shortcut: user_managed,
+        create_assistant_desktop_shortcut: false,
         register_uninstall: user_managed,
         keep_versions: 5,
         keep_all_versions: false,
@@ -963,6 +990,7 @@ fn launcher_defer_choice(action: LauncherUpdateAction) -> updater::LauncherDefer
 
 fn phase_title(phase: &str) -> &'static str {
     match phase {
+        "Elevating" => "正在请求管理员权限",
         "Downloading" => "正在下载",
         "Extracting" => "正在解压",
         "Finalizing" => "正在完成",
@@ -972,6 +1000,7 @@ fn phase_title(phase: &str) -> &'static str {
 
 fn update_phase_title(phase: &str) -> &'static str {
     match phase {
+        "Elevating" => "正在请求管理员权限",
         "Downloading" => "正在下载更新",
         "Extracting" => "正在解压更新",
         "Finalizing" => "正在完成更新",
@@ -1010,9 +1039,10 @@ fn is_github_rate_limit_error(message: &str) -> bool {
 
 fn uninstall_phase_title(phase: &str) -> &'static str {
     match phase {
+        "Elevating" => "正在请求管理员权限",
         "Validating install" => "正在校验安装目录",
         "Terminating Codex" => "正在结束 Codex 进程",
-        "Removing Start Menu shortcut" => "正在移除开始菜单快捷方式",
+        "Removing shortcuts" => "正在移除开始菜单和桌面快捷方式",
         "Removing registry entries" => "正在移除 Windows 卸载入口",
         "Removing versions/current junction" => "正在移除 current 入口",
         "Deleting files" => "正在删除文件",

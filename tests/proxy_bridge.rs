@@ -1,6 +1,6 @@
 use codex_windows_cn::bridge::{
-    launch_result_from_outcome, persist_retention_settings, proxy_launch_status, version_inventory,
-    RetentionSettingsRequest,
+    launch_result_from_outcome, persist_version_settings, proxy_launch_status, version_inventory,
+    VersionSettingsRequest,
 };
 use codex_windows_cn::config::{Config, InstallMode, UpdatePolicy};
 use codex_windows_cn::proxy::LaunchOutcome;
@@ -73,6 +73,7 @@ fn version_inventory_exposes_default_and_deletion_rules() {
     assert_eq!(inventory.default_version.as_deref(), Some("2.0.0"));
     assert_eq!(inventory.keep_versions, 2);
     assert!(!inventory.keep_all_versions);
+    assert_eq!(inventory.update_policy, UpdatePolicy::Daily);
     assert_eq!(inventory.versions.len(), 2);
     assert!(inventory.versions[0].is_default);
     assert!(inventory.versions.iter().all(|item| item.can_delete));
@@ -105,18 +106,19 @@ fn launched_outcome_reports_the_resolved_product() {
 }
 
 #[test]
-fn retention_settings_are_persisted_and_returned_in_inventory() {
+fn version_settings_are_persisted_and_returned_in_inventory() {
     let root = TestRoot::new("retention-persistence");
     root.write_codex_exe("1.0.0");
     let mut cfg = test_config(false);
     cfg.save_runtime(root.path()).expect("save initial config");
 
-    let result = persist_retention_settings(
+    let result = persist_version_settings(
         root.path(),
         &mut cfg,
-        RetentionSettingsRequest {
+        VersionSettingsRequest {
             keep_versions: 7,
             keep_all_versions: true,
+            update_policy: UpdatePolicy::Always,
         },
     )
     .expect("persist retention settings");
@@ -124,9 +126,36 @@ fn retention_settings_are_persisted_and_returned_in_inventory() {
     assert!(result.applied);
     assert_eq!(result.inventory.keep_versions, 7);
     assert!(result.inventory.keep_all_versions);
+    assert_eq!(result.inventory.update_policy, UpdatePolicy::Always);
     let saved = Config::load_runtime(root.path()).expect("reload persisted config");
     assert_eq!(saved.keep_versions, 7);
     assert!(saved.keep_all_versions);
+    assert_eq!(saved.update_policy, UpdatePolicy::Always);
+}
+
+#[test]
+fn reenabling_update_checks_clears_never_suppression() {
+    let root = TestRoot::new("update-policy-reenable");
+    root.write_codex_exe("1.0.0");
+    let mut cfg = test_config(false);
+    cfg.update_policy = UpdatePolicy::Never;
+    cfg.suppress_until_unix = Some(u64::MAX);
+    cfg.launcher_suppress_until_unix = Some(u64::MAX);
+
+    persist_version_settings(
+        root.path(),
+        &mut cfg,
+        VersionSettingsRequest {
+            keep_versions: 2,
+            keep_all_versions: false,
+            update_policy: UpdatePolicy::Daily,
+        },
+    )
+    .expect("reenable update checks");
+
+    assert_eq!(cfg.update_policy, UpdatePolicy::Daily);
+    assert_eq!(cfg.suppress_until_unix, None);
+    assert_eq!(cfg.launcher_suppress_until_unix, None);
 }
 
 fn test_config(use_current_junction: bool) -> Config {
@@ -135,6 +164,7 @@ fn test_config(use_current_junction: bool) -> Config {
         current_version: "1.0.0".into(),
         update_policy: UpdatePolicy::default(),
         last_check_unix: None,
+        last_launcher_check_unix: None,
         suppress_until_unix: None,
         known_latest: Some("1.2.0".into()),
         skipped_version: None,

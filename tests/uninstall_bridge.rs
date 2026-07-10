@@ -17,6 +17,9 @@ fn uninstall_confirmation_explains_deleted_and_preserved_data() {
     assert!(confirmation.delete_items.contains(&"下载缓存".into()));
     assert!(confirmation.delete_items.contains(&"启动器配置".into()));
     assert!(confirmation
+        .delete_items
+        .contains(&"开始菜单和桌面快捷方式".into()));
+    assert!(confirmation
         .preserve_items
         .contains(&"Codex/ChatGPT 登录数据".into()));
     assert!(confirmation
@@ -52,6 +55,18 @@ fn uninstall_worker_messages_are_reported_as_chinese_events() {
             message: None,
         }
     );
+}
+
+#[test]
+fn uninstall_elevation_phase_is_reported_in_chinese() {
+    let event = uninstall_event_from_msg(UninstallMsg::Phase {
+        phase: "Elevating".into(),
+        detail: "请在 Windows 提示中允许管理员权限。".into(),
+    });
+
+    assert_eq!(event.kind, UninstallEventKind::Phase);
+    assert_eq!(event.title, "正在请求管理员权限");
+    assert_eq!(event.detail, "请在 Windows 提示中允许管理员权限。");
 }
 
 struct TestRoot {

@@ -53,7 +53,7 @@ export function LoadingSplash() {
       title="正在启动 Codex Windows 中文助手"
     >
       <ProgressScreen
-        brandMark="C"
+        brandMark
         compact
         detail="正在读取安装、版本和更新状态。"
         indeterminate

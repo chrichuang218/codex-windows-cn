@@ -1,3 +1,5 @@
+import { AssistantMark } from "./AssistantMark";
+
 export function ProgressScreen({
   brandMark,
   compact = false,
@@ -6,7 +8,7 @@ export function ProgressScreen({
   progress,
   title
 }: {
-  brandMark?: string;
+  brandMark?: boolean;
   compact?: boolean;
   detail?: string;
   indeterminate: boolean;
@@ -15,7 +17,7 @@ export function ProgressScreen({
 }) {
   return (
     <section className={compact ? "screen center-screen boot-progress-screen" : "screen center-screen"}>
-      {brandMark ? <div aria-hidden="true" className="assistant-mark">{brandMark}</div> : null}
+      {brandMark ? <AssistantMark label="ChatGPT 标志" /> : null}
       <h2>{title}</h2>
       <div
         aria-label={title}

@@ -8,6 +8,7 @@ import {
   Layers3,
   LayoutDashboard,
   LoaderCircle,
+  MonitorUp,
   Play,
   RefreshCw,
   Rocket,
@@ -16,16 +17,18 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { InstalledVersionStatus, VersionInventory } from "../../bridge";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { InstalledVersionStatus, UpdatePolicy, VersionInventory } from "../../bridge";
 import {
   launcherUpdateActionLabels,
   fetcherLabels,
+  updatePolicyLabels,
   updateActionLabels,
   workspacePanelLabel
 } from "../../appModel";
 import type { UpdateAction } from "../../bridge";
 import type { ReadyAppController } from "../../useAppController";
+import { AssistantMark } from "../../components/AssistantMark";
 import { ProgressScreen } from "../../components/Progress";
 
 const updateDeferActionOrder: Exclude<UpdateAction, "updateNow">[] = [
@@ -41,6 +44,13 @@ type PendingSwitch = {
   runningVersions: string[];
 };
 
+type BusyAction = "launch" | "delete" | "settings" | "shortcut" | null;
+
+type ShortcutActionFeedback = {
+  error: boolean;
+  message: string;
+};
+
 export function InstalledWorkspace({ controller }: { controller: ReadyAppController }) {
   const {
     bridge,
@@ -53,16 +63,31 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
   const [inventory, setInventory] = useState<VersionInventory | null>(null);
   const [inventoryError, setInventoryError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [busyAction, setBusyAction] = useState<"launch" | "delete" | "settings" | null>(null);
+  const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [pendingSwitch, setPendingSwitch] = useState<PendingSwitch | null>(null);
   const [pendingDelete, setPendingDelete] = useState<InstalledVersionStatus | null>(null);
+  const inventoryGeneration = useRef(0);
+
+  const commitInventory = useCallback((next: VersionInventory) => {
+    inventoryGeneration.current += 1;
+    setInventory(next);
+    setInventoryError(null);
+  }, []);
 
   const refreshInventory = useCallback(async () => {
+    const generation = inventoryGeneration.current + 1;
+    inventoryGeneration.current = generation;
     try {
       const next = await bridge.getVersionInventory();
+      if (inventoryGeneration.current !== generation) {
+        return;
+      }
       setInventory(next);
       setInventoryError(null);
     } catch (cause) {
+      if (inventoryGeneration.current !== generation) {
+        return;
+      }
       setInventoryError(errorMessage(cause, "无法读取本机版本"));
     }
   }, [bridge]);
@@ -133,7 +158,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
     setActionMessage(null);
     try {
       const result = await bridge.deleteInstalledVersion(pendingDelete.version);
-      setInventory(result.inventory);
+      commitInventory(result.inventory);
       setActionMessage(result.message);
       setPendingDelete(null);
     } catch (cause) {
@@ -143,18 +168,61 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
     }
   };
 
-  const saveRetention = async (keepVersions: number, keepAllVersions: boolean) => {
+  const saveVersionSettings = async (
+    keepVersions: number,
+    keepAllVersions: boolean,
+    updatePolicy: UpdatePolicy
+  ) => {
     setBusyAction("settings");
     setActionMessage(null);
     try {
-      const result = await bridge.saveRetentionSettings({
+      const result = await bridge.saveVersionSettings({
         keepVersions,
-        keepAllVersions
+        keepAllVersions,
+        updatePolicy
       });
-      setInventory(result.inventory);
+      commitInventory(result.inventory);
       setActionMessage(result.message);
+      return true;
     } catch (cause) {
-      setActionMessage(errorMessage(cause, "保存保留策略失败"));
+      setActionMessage(errorMessage(cause, "保存版本策略失败"));
+      return false;
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const setDesktopShortcut = async (enabled: boolean): Promise<ShortcutActionFeedback> => {
+    setBusyAction("shortcut");
+    setActionMessage(null);
+    try {
+      const result = await bridge.setDesktopShortcut(enabled);
+      commitInventory(result.inventory);
+      return { error: false, message: result.message };
+    } catch (cause) {
+      return {
+        error: true,
+        message: errorMessage(cause, "修改桌面快捷方式失败")
+      };
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const setAssistantDesktopShortcut = async (
+    enabled: boolean
+  ): Promise<ShortcutActionFeedback> => {
+    setBusyAction("shortcut");
+    setActionMessage(null);
+    try {
+      const result = await bridge.setAssistantDesktopShortcut(enabled);
+      commitInventory(result.inventory);
+      return { error: false, message: result.message };
+    } catch (cause) {
+      return {
+        error: true,
+        message: errorMessage(cause, "修改中文助手桌面快捷方式失败")
+      };
     } finally {
       setBusyAction(null);
     }
@@ -163,9 +231,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
   return (
     <main className="console-shell">
       <aside className="console-rail" aria-label="主导航">
-        <div className="rail-brand" aria-label={assistantName}>
-          <span>C</span>
-        </div>
+        <AssistantMark className="rail-brand" label={assistantName} />
         <nav>
           <NavButton
             active={workspacePanel === "home"}
@@ -232,10 +298,13 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
           {workspacePanel === "settings" ? (
             <SettingsPanel
               actionMessage={actionMessage}
-              busy={busyAction === "settings"}
+              busy={busyAction !== null}
               controller={controller}
               inventory={inventory}
-              onSave={(count, keepAll) => void saveRetention(count, keepAll)}
+              onSave={saveVersionSettings}
+              onSetAssistantDesktopShortcut={setAssistantDesktopShortcut}
+              onSetDesktopShortcut={setDesktopShortcut}
+              saving={busyAction === "settings"}
             />
           ) : null}
           {workspacePanel === "uninstall" ? <UninstallPanel controller={controller} /> : null}
@@ -413,7 +482,7 @@ function VersionsPanel({
   onLaunch
 }: {
   actionMessage: string | null;
-  busy: "launch" | "delete" | "settings" | null;
+  busy: BusyAction;
   inventory: VersionInventory | null;
   inventoryError: string | null;
   onDelete: (version: InstalledVersionStatus) => void;
@@ -488,24 +557,84 @@ function SettingsPanel({
   busy,
   controller,
   inventory,
-  onSave
+  onSave,
+  onSetAssistantDesktopShortcut,
+  onSetDesktopShortcut,
+  saving
 }: {
   actionMessage: string | null;
   busy: boolean;
   controller: ReadyAppController;
   inventory: VersionInventory | null;
-  onSave: (count: number, keepAll: boolean) => void;
+  onSave: (count: number, keepAll: boolean, updatePolicy: UpdatePolicy) => Promise<boolean>;
+  onSetAssistantDesktopShortcut: (enabled: boolean) => Promise<ShortcutActionFeedback>;
+  onSetDesktopShortcut: (enabled: boolean) => Promise<ShortcutActionFeedback>;
+  saving: boolean;
 }) {
   const { setWorkspacePanel } = controller;
   const [keepAll, setKeepAll] = useState(inventory?.keepAllVersions ?? false);
   const [count, setCount] = useState(inventory?.keepVersions ?? 5);
+  const [updatePolicy, setUpdatePolicy] = useState<UpdatePolicy>(
+    inventory?.updatePolicy ?? "daily"
+  );
+  const [dirty, setDirty] = useState(false);
+  const [shortcutIntent, setShortcutIntent] = useState<boolean | null>(null);
+  const [assistantShortcutIntent, setAssistantShortcutIntent] = useState<boolean | null>(null);
+  const [shortcutFeedback, setShortcutFeedback] = useState<ShortcutActionFeedback | null>(null);
+  const [assistantShortcutFeedback, setAssistantShortcutFeedback] =
+    useState<ShortcutActionFeedback | null>(null);
+  const editRevision = useRef(0);
+  const savedKeepAll = inventory?.keepAllVersions;
+  const savedCount = inventory?.keepVersions;
+  const savedUpdatePolicy = inventory?.updatePolicy;
 
   useEffect(() => {
-    if (inventory) {
-      setKeepAll(inventory.keepAllVersions);
-      setCount(inventory.keepVersions);
+    if (
+      !dirty &&
+      savedKeepAll !== undefined &&
+      savedCount !== undefined &&
+      savedUpdatePolicy !== undefined
+    ) {
+      setKeepAll(savedKeepAll);
+      setCount(savedCount);
+      setUpdatePolicy(savedUpdatePolicy);
     }
-  }, [inventory]);
+  }, [dirty, savedKeepAll, savedCount, savedUpdatePolicy]);
+
+  const markDirty = () => {
+    editRevision.current += 1;
+    setDirty(true);
+  };
+
+  const save = async () => {
+    const submittedRevision = editRevision.current;
+    if (
+      (await onSave(count, keepAll, updatePolicy)) &&
+      editRevision.current === submittedRevision
+    ) {
+      setDirty(false);
+    }
+  };
+
+  const updateDesktopShortcut = async (enabled: boolean) => {
+    setShortcutIntent(enabled);
+    setShortcutFeedback(null);
+    try {
+      setShortcutFeedback(await onSetDesktopShortcut(enabled));
+    } finally {
+      setShortcutIntent(null);
+    }
+  };
+
+  const updateAssistantDesktopShortcut = async (enabled: boolean) => {
+    setAssistantShortcutIntent(enabled);
+    setAssistantShortcutFeedback(null);
+    try {
+      setAssistantShortcutFeedback(await onSetAssistantDesktopShortcut(enabled));
+    } finally {
+      setAssistantShortcutIntent(null);
+    }
+  };
 
   return (
     <section className="console-view settings-view">
@@ -522,10 +651,24 @@ function SettingsPanel({
           <span>更新完成后清理超出策略且未运行的版本</span>
         </div>
         <div className="segmented" aria-label="版本保留模式">
-          <button aria-pressed={!keepAll} onClick={() => setKeepAll(false)} type="button">
+          <button
+            aria-pressed={!keepAll}
+            onClick={() => {
+              setKeepAll(false);
+              markDirty();
+            }}
+            type="button"
+          >
             最近版本
           </button>
-          <button aria-pressed={keepAll} onClick={() => setKeepAll(true)} type="button">
+          <button
+            aria-pressed={keepAll}
+            onClick={() => {
+              setKeepAll(true);
+              markDirty();
+            }}
+            type="button"
+          >
             全部保留
           </button>
         </div>
@@ -536,7 +679,10 @@ function SettingsPanel({
               aria-label="自动保留版本数量"
               max={20}
               min={1}
-              onChange={(event) => setCount(clamp(Number(event.target.value), 1, 20))}
+              onChange={(event) => {
+                setCount(clamp(Number(event.target.value), 1, 20));
+                markDirty();
+              }}
               type="number"
               value={count}
             />
@@ -544,12 +690,12 @@ function SettingsPanel({
         ) : null}
         <button
           className="button primary save-settings"
-          disabled={busy || !inventory}
-          onClick={() => onSave(count, keepAll)}
+          disabled={busy || !inventory || !dirty}
+          onClick={() => void save()}
           type="button"
         >
-          {busy ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={15} />}
-          保存设置
+          {saving ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={15} />}
+          {saving ? "保存中" : dirty ? "保存设置" : "已保存"}
         </button>
       </section>
 
@@ -564,9 +710,61 @@ function SettingsPanel({
         </div>
         <div className="settings-copy">
           <strong>稳定入口</strong>
-          <span>{inventory?.useCurrentJunction ? "versions\\current" : "未启用"}</span>
+          {inventory && !inventory.useCurrentJunction ? <span>未启用</span> : null}
+          {inventory?.useCurrentJunction ? (
+            <code className="settings-detail">versions\current</code>
+          ) : null}
         </div>
+        <label className="settings-copy">
+          <strong>自动检查更新</strong>
+          <select
+            aria-label="自动检查更新频率"
+            className="settings-policy-select"
+            disabled={!inventory}
+            onChange={(event) => {
+              setUpdatePolicy(event.target.value as UpdatePolicy);
+              markDirty();
+            }}
+            value={updatePolicy}
+          >
+            {(Object.keys(updatePolicyLabels) as UpdatePolicy[]).map((policy) => (
+              <option key={policy} value={policy}>
+                {updatePolicyLabels[policy]}
+              </option>
+            ))}
+          </select>
+        </label>
       </section>
+
+      <ShortcutSetting
+        busy={busy}
+        description={
+          inventory?.desktopShortcutExists
+            ? "直接启动本机最新 ChatGPT"
+            : "旧安装也可补建，创建后直接启动最新 ChatGPT"
+        }
+        exists={inventory?.desktopShortcutExists ?? false}
+        feedback={shortcutFeedback}
+        intent={shortcutIntent}
+        loaded={!!inventory}
+        onSet={updateDesktopShortcut}
+        title="ChatGPT 桌面入口"
+      />
+
+      <ShortcutSetting
+        busy={busy}
+        description={
+          inventory?.assistantDesktopShortcutExists
+            ? "打开安装、更新、版本和快捷方式设置"
+            : "需要时可补建独立的中文助手桌面入口"
+        }
+        exists={inventory?.assistantDesktopShortcutExists ?? false}
+        feedback={assistantShortcutFeedback}
+        intent={assistantShortcutIntent}
+        loaded={!!inventory}
+        onSet={updateAssistantDesktopShortcut}
+        title="中文助手桌面入口"
+      />
 
       <section className="maintenance-strip">
         <button onClick={() => setWorkspacePanel("launcherUpdate")} type="button">
@@ -580,6 +778,92 @@ function SettingsPanel({
       </section>
 
       {actionMessage ? <p className="inline-message">{actionMessage}</p> : null}
+    </section>
+  );
+}
+
+function ShortcutSetting({
+  busy,
+  description,
+  exists,
+  feedback,
+  intent,
+  loaded,
+  onSet,
+  title
+}: {
+  busy: boolean;
+  description: string;
+  exists: boolean;
+  feedback: ShortcutActionFeedback | null;
+  intent: boolean | null;
+  loaded: boolean;
+  onSet: (enabled: boolean) => Promise<void>;
+  title: string;
+}) {
+  return (
+    <section className="settings-section shortcut-setting">
+      <div className="settings-copy">
+        <strong>{title}</strong>
+        <span>{description}</span>
+        {feedback ? (
+          <p
+            className={feedback.error ? "shortcut-feedback error" : "shortcut-feedback"}
+            role="status"
+          >
+            {feedback.message}
+          </p>
+        ) : null}
+      </div>
+      <div className="shortcut-actions">
+        {exists ? (
+          <>
+            <button
+              aria-label={`修复${title}`}
+              className="button secondary"
+              disabled={busy}
+              onClick={() => void onSet(true)}
+              type="button"
+            >
+              {intent === true ? (
+                <LoaderCircle className="spin" size={15} />
+              ) : (
+                <MonitorUp size={15} />
+              )}
+              修复
+            </button>
+            <button
+              aria-label={`移除${title}`}
+              className="button subtle"
+              disabled={busy}
+              onClick={() => void onSet(false)}
+              type="button"
+            >
+              {intent === false ? (
+                <LoaderCircle className="spin" size={15} />
+              ) : (
+                <Trash2 size={15} />
+              )}
+              移除
+            </button>
+          </>
+        ) : (
+          <button
+            aria-label={`创建${title}`}
+            className="button secondary"
+            disabled={busy || !loaded}
+            onClick={() => void onSet(true)}
+            type="button"
+          >
+            {intent === true ? (
+              <LoaderCircle className="spin" size={15} />
+            ) : (
+              <MonitorUp size={15} />
+            )}
+            创建
+          </button>
+        )}
+      </div>
     </section>
   );
 }

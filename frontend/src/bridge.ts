@@ -17,12 +17,15 @@ export type AppStatus = {
 export type InstallMode = "portable" | "user" | "system";
 export type Fetcher = "direct" | "winget" | "localFile";
 export type AppKind = "codex" | "chatGpt";
+export type UpdatePolicy = "always" | "daily" | "weekly" | "never";
 
 export type InstallModeDefaults = {
   mode: InstallMode;
   label: string;
   defaultRoot: string;
   createShortcut: boolean;
+  createDesktopShortcut: boolean;
+  createAssistantDesktopShortcut: boolean;
   registerUninstall: boolean;
   keepVersions: number;
   keepAllVersions: boolean;
@@ -40,6 +43,8 @@ export type InstallRequest = {
   mode: InstallMode;
   root: string;
   createShortcut: boolean;
+  createDesktopShortcut: boolean;
+  createAssistantDesktopShortcut: boolean;
   registerUninstall: boolean;
   keepVersions: number;
   keepAllVersions: boolean;
@@ -50,6 +55,7 @@ export type InstallRequest = {
 
 export type InstallStart = {
   accepted: boolean;
+  cancellable: boolean;
 };
 
 export type InstallEvent = {
@@ -110,17 +116,27 @@ export type VersionInventory = {
   runningVersions: string[];
   keepVersions: number;
   keepAllVersions: boolean;
+  updatePolicy: UpdatePolicy;
   fetcher: Fetcher;
   useCurrentJunction: boolean;
+  desktopShortcutExists: boolean;
+  assistantDesktopShortcutExists: boolean;
   versions: InstalledVersionStatus[];
 };
 
-export type RetentionSettingsRequest = {
+export type VersionSettingsRequest = {
   keepVersions: number;
   keepAllVersions: boolean;
+  updatePolicy: UpdatePolicy;
 };
 
 export type VersionActionResult = {
+  applied: boolean;
+  message: string;
+  inventory: VersionInventory;
+};
+
+export type DesktopShortcutActionResult = {
   applied: boolean;
   message: string;
   inventory: VersionInventory;
@@ -238,9 +254,9 @@ export type AppBridge = {
   launchInstalledCodex: (request: LaunchInstalledRequest) => Promise<ProxyLaunchResult>;
   getVersionInventory: () => Promise<VersionInventory>;
   deleteInstalledVersion: (version: string) => Promise<VersionActionResult>;
-  saveRetentionSettings: (
-    request: RetentionSettingsRequest
-  ) => Promise<VersionActionResult>;
+  saveVersionSettings: (request: VersionSettingsRequest) => Promise<VersionActionResult>;
+  setDesktopShortcut: (enabled: boolean) => Promise<DesktopShortcutActionResult>;
+  setAssistantDesktopShortcut: (enabled: boolean) => Promise<DesktopShortcutActionResult>;
   checkUpdateStatus: () => Promise<UpdateStatus>;
   startUpdate: () => Promise<UpdateStart>;
   getUpdateStatus: () => Promise<UpdateEvent | null>;
@@ -285,6 +301,8 @@ const fallbackInstallerDefaults: InstallerDefaults = {
       label: "便携模式",
       defaultRoot: ".\\CodexPortable",
       createShortcut: false,
+      createDesktopShortcut: false,
+      createAssistantDesktopShortcut: false,
       registerUninstall: false,
       keepVersions: 5,
       keepAllVersions: false,
@@ -295,6 +313,8 @@ const fallbackInstallerDefaults: InstallerDefaults = {
       label: "当前用户",
       defaultRoot: "C:\\Users\\Public\\Codex",
       createShortcut: true,
+      createDesktopShortcut: true,
+      createAssistantDesktopShortcut: false,
       registerUninstall: true,
       keepVersions: 5,
       keepAllVersions: false,
@@ -305,6 +325,8 @@ const fallbackInstallerDefaults: InstallerDefaults = {
       label: "所有用户",
       defaultRoot: "C:\\Program Files\\Codex",
       createShortcut: true,
+      createDesktopShortcut: true,
+      createAssistantDesktopShortcut: false,
       registerUninstall: true,
       keepVersions: 5,
       keepAllVersions: false,
@@ -332,10 +354,16 @@ export const fallbackVersionInventory: VersionInventory = {
   runningVersions: [],
   keepVersions: 5,
   keepAllVersions: false,
+  updatePolicy: "daily",
   fetcher: "direct",
   useCurrentJunction: true,
+  desktopShortcutExists: false,
+  assistantDesktopShortcutExists: false,
   versions: []
 };
+
+let fallbackDesktopShortcutExists = false;
+let fallbackAssistantDesktopShortcutExists = false;
 
 export const fallbackUpdateStatus: UpdateStatus = {
   kind: "skipped",
@@ -386,14 +414,14 @@ export const tauriBridge: AppBridge = {
   },
   startInstall: (request) => {
     if (!("__TAURI_INTERNALS__" in window)) {
-      return Promise.resolve({ accepted: true });
+      return Promise.resolve({ accepted: true, cancellable: true });
     }
 
     return invoke<InstallStart>("start_install", { request });
   },
   cancelInstall: () => {
     if (!("__TAURI_INTERNALS__" in window)) {
-      return Promise.resolve({ accepted: true });
+      return Promise.resolve({ accepted: true, cancellable: true });
     }
 
     return invoke<InstallStart>("cancel_install");
@@ -463,7 +491,11 @@ export const tauriBridge: AppBridge = {
   },
   getVersionInventory: () => {
     if (!("__TAURI_INTERNALS__" in window)) {
-      return Promise.resolve(fallbackVersionInventory);
+      return Promise.resolve({
+        ...fallbackVersionInventory,
+        desktopShortcutExists: fallbackDesktopShortcutExists,
+        assistantDesktopShortcutExists: fallbackAssistantDesktopShortcutExists
+      });
     }
     return invoke<VersionInventory>("get_version_inventory");
   },
@@ -477,17 +509,54 @@ export const tauriBridge: AppBridge = {
     }
     return invoke<VersionActionResult>("delete_installed_version", { version });
   },
-  saveRetentionSettings: (request) => {
+  saveVersionSettings: (request) => {
     if (!("__TAURI_INTERNALS__" in window)) {
       return Promise.resolve({
         applied: true,
-        message: request.keepAllVersions
-          ? "已设置为全部保留"
-          : `将自动保留最近 ${request.keepVersions} 个版本`,
-        inventory: { ...fallbackVersionInventory, ...request }
+        message: "版本策略已保存",
+        inventory: {
+          ...fallbackVersionInventory,
+          ...request,
+          desktopShortcutExists: fallbackDesktopShortcutExists,
+          assistantDesktopShortcutExists: fallbackAssistantDesktopShortcutExists
+        }
       });
     }
-    return invoke<VersionActionResult>("save_retention_settings", { request });
+    return invoke<VersionActionResult>("save_version_settings", { request });
+  },
+  setDesktopShortcut: (enabled) => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      fallbackDesktopShortcutExists = enabled;
+      return Promise.resolve({
+        applied: true,
+        message: enabled
+          ? "已创建 ChatGPT 桌面快捷方式"
+          : "已移除 ChatGPT 桌面快捷方式",
+        inventory: {
+          ...fallbackVersionInventory,
+          desktopShortcutExists: enabled,
+          assistantDesktopShortcutExists: fallbackAssistantDesktopShortcutExists
+        }
+      });
+    }
+    return invoke<DesktopShortcutActionResult>("set_desktop_shortcut", { enabled });
+  },
+  setAssistantDesktopShortcut: (enabled) => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      fallbackAssistantDesktopShortcutExists = enabled;
+      return Promise.resolve({
+        applied: true,
+        message: enabled
+          ? "已创建中文助手桌面快捷方式"
+          : "已移除中文助手桌面快捷方式",
+        inventory: {
+          ...fallbackVersionInventory,
+          desktopShortcutExists: fallbackDesktopShortcutExists,
+          assistantDesktopShortcutExists: enabled
+        }
+      });
+    }
+    return invoke<DesktopShortcutActionResult>("set_assistant_desktop_shortcut", { enabled });
   },
   checkUpdateStatus: () => {
     if (!("__TAURI_INTERNALS__" in window)) {

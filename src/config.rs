@@ -45,6 +45,8 @@ pub struct Config {
     pub update_policy: UpdatePolicy,
     #[serde(default)]
     pub last_check_unix: Option<u64>,
+    #[serde(default)]
+    pub last_launcher_check_unix: Option<u64>,
     /// If Some, skip the update prompt until this time. Used by the
     /// "don't ask again for 1 day / 7 days / ever" options.
     #[serde(default)]
@@ -220,7 +222,8 @@ pub fn clear_state_file_if_ours(
 /// fat-fingers one of them at runtime, the state file becomes the
 /// authoritative answer. Tighten by splitting into a `RuntimeState`
 /// struct holding only mutable fields (current_version, update_policy,
-/// last_check_unix, suppress_until_unix, known_latest, skipped_version)
+/// last_check_unix, last_launcher_check_unix, suppress_until_unix,
+/// known_latest, skipped_version)
 /// and overlaying onto the install-root config at load time. Not urgent.
 #[derive(Debug, Serialize, Deserialize)]
 struct StateFile {

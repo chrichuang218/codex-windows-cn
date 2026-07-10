@@ -25,6 +25,8 @@ const installerDefaults: InstallerDefaults = {
       label: "便携模式",
       defaultRoot: "D:\\Tools\\CodexPortable",
       createShortcut: false,
+      createDesktopShortcut: false,
+      createAssistantDesktopShortcut: false,
       registerUninstall: false,
       keepVersions: 5,
       keepAllVersions: false,
@@ -35,6 +37,8 @@ const installerDefaults: InstallerDefaults = {
       label: "当前用户",
       defaultRoot: "C:\\Users\\tester\\AppData\\Local\\Codex",
       createShortcut: true,
+      createDesktopShortcut: true,
+      createAssistantDesktopShortcut: false,
       registerUninstall: true,
       keepVersions: 5,
       keepAllVersions: false,
@@ -45,6 +49,8 @@ const installerDefaults: InstallerDefaults = {
       label: "所有用户",
       defaultRoot: "C:\\Program Files\\Codex",
       createShortcut: true,
+      createDesktopShortcut: true,
+      createAssistantDesktopShortcut: false,
       registerUninstall: true,
       keepVersions: 5,
       keepAllVersions: false,
@@ -93,6 +99,9 @@ const versionInventory: VersionInventory = {
   runningVersions: [],
   keepVersions: 5,
   keepAllVersions: false,
+  updatePolicy: "daily",
+  desktopShortcutExists: false,
+  assistantDesktopShortcutExists: false,
   fetcher: "direct",
   useCurrentJunction: true,
   versions: [
@@ -200,7 +209,7 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(screen.getByRole("heading", { name: "Codex Windows 中文助手" })).toBeVisible();
     expect(screen.getByText("安装向导")).toBeVisible();
     expect(screen.getByLabelText("当前页面")).toHaveTextContent("正在加载");
-    expect(screen.getByText("C")).toBeVisible();
+    expect(screen.getByRole("img", { name: "ChatGPT 标志" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "正在启动 Codex Windows 中文助手" })).toBeVisible();
     expect(screen.getByText("正在读取安装、版本和更新状态。")).toBeVisible();
     expect(screen.getByText("官方 Microsoft Store 分发")).toBeVisible();
@@ -230,11 +239,15 @@ describe("Codex Windows 中文助手 shell", () => {
 
   test("walks the installer screens and starts installation with selected options", async () => {
     let submittedRoot = "";
+    let submittedDesktopShortcut = false;
+    let submittedAssistantDesktopShortcut = false;
     const bridge = makeBridge({
       installed: false,
       startInstall: async (request) => {
         submittedRoot = request.root;
-        return { accepted: true };
+        submittedDesktopShortcut = request.createDesktopShortcut;
+        submittedAssistantDesktopShortcut = request.createAssistantDesktopShortcut;
+        return { accepted: true, cancellable: true };
       }
     });
 
@@ -255,6 +268,16 @@ describe("Codex Windows 中文助手 shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "下一步" }));
     expect(await screen.findByRole("heading", { name: "安装选项" })).toBeVisible();
+    const desktopShortcut = screen.getByRole("checkbox", {
+      name: "创建 ChatGPT 桌面快捷方式"
+    });
+    expect(desktopShortcut).not.toBeChecked();
+    fireEvent.click(desktopShortcut);
+    const assistantDesktopShortcut = screen.getByRole("checkbox", {
+      name: "创建中文助手桌面快捷方式"
+    });
+    expect(assistantDesktopShortcut).not.toBeChecked();
+    fireEvent.click(assistantDesktopShortcut);
 
     fireEvent.click(screen.getByRole("button", { name: "安装" }));
 
@@ -263,6 +286,8 @@ describe("Codex Windows 中文助手 shell", () => {
       screen.getByText("正在解析官方桌面应用下载地址，首次安装可能需要几分钟。")
     ).toBeVisible();
     expect(submittedRoot).toBe("D:\\Tools\\CodexPortable");
+    expect(submittedDesktopShortcut).toBe(true);
+    expect(submittedAssistantDesktopShortcut).toBe(true);
   });
 
   test("shows installation progress and completion as exclusive wizard states", async () => {
@@ -476,7 +501,7 @@ describe("Codex Windows 中文助手 shell", () => {
       installed: false,
       cancelInstall: async () => {
         cancelled = true;
-        return { accepted: true };
+        return { accepted: true, cancellable: true };
       },
       onInstallEvent: (handler) => {
         emitInstallEvent = handler;
@@ -509,6 +534,23 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(await screen.findByText("安装已取消")).toBeVisible();
   });
 
+  test("system helper hides the unavailable cancel action", async () => {
+    const bridge = makeBridge({
+      installed: false,
+      startInstall: async () => ({ accepted: true, cancellable: false })
+    });
+
+    render(<App bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("button", { name: "开始安装" }));
+    fireEvent.click(await screen.findByRole("button", { name: /所有用户/ }));
+    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    fireEvent.click(await screen.findByRole("button", { name: "下一步" }));
+    fireEvent.click(await screen.findByRole("button", { name: "安装" }));
+
+    expect(await screen.findByText("管理员安装进行中，完成前请勿关闭窗口")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "取消安装" })).toBeNull();
+  });
+
   test("installed mode opens the ChatGPT overview and launches the default version", async () => {
     const launchRequests: (LaunchRequest | undefined)[] = [];
     const bridge = makeBridge({
@@ -523,6 +565,7 @@ describe("Codex Windows 中文助手 shell", () => {
 
     expect(await screen.findByRole("button", { name: "概览" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Codex Windows 中文助手" })).toBeVisible();
+    expect(screen.getByRole("img", { name: "Codex Windows 中文助手" })).toBeVisible();
     expect(screen.getByRole("button", { name: "概览" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("button", { name: "版本" })).toBeVisible();
     expect(screen.getByRole("button", { name: "设置" })).toBeVisible();
@@ -681,14 +724,18 @@ describe("Codex Windows 中文助手 shell", () => {
   });
 
   test("settings persist both a recent-version count and keep-all mode", async () => {
-    const requests: Array<{ keepVersions: number; keepAllVersions: boolean }> = [];
+    const requests: Array<{
+      keepVersions: number;
+      keepAllVersions: boolean;
+      updatePolicy: "always" | "daily" | "weekly" | "never";
+    }> = [];
     const bridge = makeBridge({
       installed: true,
-      saveRetentionSettings: async (request) => {
+      saveVersionSettings: async (request) => {
         requests.push(request);
         return {
           applied: true,
-          message: request.keepAllVersions ? "已设置为全部保留" : "已保存版本保留设置",
+          message: "版本策略已保存",
           inventory: { ...versionInventory, ...request }
         };
       }
@@ -697,20 +744,174 @@ describe("Codex Windows 中文助手 shell", () => {
     render(<App bridge={bridge} />);
     fireEvent.click(await screen.findByRole("button", { name: "设置" }));
     expect(await screen.findByRole("heading", { name: "保留与维护" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "已保存" })).toBeDisabled();
+    expect(screen.getByText("稳定入口")).toBeVisible();
+    expect(screen.getByText("versions\\current")).toBeVisible();
+    expect(screen.queryByText("已启用")).toBeNull();
+    expect(screen.getByRole("combobox", { name: "自动检查更新频率" })).toHaveValue("daily");
 
     fireEvent.change(screen.getByRole("spinbutton", { name: "自动保留版本数量" }), {
       target: { value: "7" }
     });
+    fireEvent.change(screen.getByRole("combobox", { name: "自动检查更新频率" }), {
+      target: { value: "always" }
+    });
+    expect(screen.getByRole("button", { name: "保存设置" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
-    expect(await screen.findByText("已保存版本保留设置")).toBeVisible();
+    expect(await screen.findByText("版本策略已保存")).toBeVisible();
+    expect(screen.getByRole("button", { name: "已保存" })).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "全部保留" }));
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
-    expect(await screen.findByText("已设置为全部保留")).toBeVisible();
+    expect(await screen.findByText("版本策略已保存")).toBeVisible();
     expect(requests).toEqual([
-      { keepVersions: 7, keepAllVersions: false },
-      { keepVersions: 7, keepAllVersions: true }
+      { keepVersions: 7, keepAllVersions: false, updatePolicy: "always" },
+      { keepVersions: 7, keepAllVersions: true, updatePolicy: "always" }
     ]);
+  });
+
+  test("settings keep an unsaved keep-all selection while inventory refreshes", async () => {
+    let inventoryReads = 0;
+    let returnRefreshedInventory = false;
+    const bridge = makeBridge({
+      installed: true,
+      getVersionInventory: async () => {
+        inventoryReads += 1;
+        return {
+          ...versionInventory,
+          root: returnRefreshedInventory ? "C:\\refreshed" : versionInventory.root
+        };
+      }
+    });
+
+    render(<App bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+    expect(await screen.findByRole("heading", { name: "保留与维护" })).toBeVisible();
+
+    const keepAllButton = screen.getByRole("button", { name: "全部保留" });
+    fireEvent.click(keepAllButton);
+    expect(keepAllButton).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("spinbutton", { name: "自动保留版本数量" })).toBeNull();
+
+    const readsBeforeRefresh = inventoryReads;
+    returnRefreshedInventory = true;
+    fireEvent.focus(window);
+    await waitFor(() => expect(inventoryReads).toBeGreaterThan(readsBeforeRefresh));
+    expect(await screen.findByText("C:\\refreshed")).toBeVisible();
+
+    expect(keepAllButton).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("spinbutton", { name: "自动保留版本数量" })).toBeNull();
+  });
+
+  test("settings ignore an inventory response started before a successful save", async () => {
+    let inventoryReads = 0;
+    let resolveStaleRefresh: ((inventory: VersionInventory) => void) | null = null;
+    const bridge = makeBridge({
+      installed: true,
+      getVersionInventory: async () => {
+        inventoryReads += 1;
+        if (inventoryReads === 1) {
+          return versionInventory;
+        }
+        return new Promise<VersionInventory>((resolve) => {
+          resolveStaleRefresh = resolve;
+        });
+      },
+      saveVersionSettings: async (request) => ({
+        applied: true,
+        message: "版本策略已保存",
+        inventory: { ...versionInventory, ...request }
+      })
+    });
+
+    render(<App bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+    fireEvent.focus(window);
+    await waitFor(() => expect(resolveStaleRefresh).not.toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: "全部保留" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    expect(await screen.findByText("版本策略已保存")).toBeVisible();
+
+    await act(async () => {
+      resolveStaleRefresh?.({ ...versionInventory, root: "C:\\stale" });
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("C:\\stale")).toBeNull();
+
+    expect(screen.getByRole("button", { name: "全部保留" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+  });
+
+  test("settings create and remove the ChatGPT desktop shortcut", async () => {
+    const requests: boolean[] = [];
+    let inventory = { ...versionInventory, desktopShortcutExists: false };
+    const bridge = makeBridge({
+      installed: true,
+      getVersionInventory: async () => inventory,
+      setDesktopShortcut: async (enabled) => {
+        requests.push(enabled);
+        inventory = { ...inventory, desktopShortcutExists: enabled };
+        return {
+          applied: true,
+          message: enabled ? "已创建 ChatGPT 桌面快捷方式" : "已移除 ChatGPT 桌面快捷方式",
+          inventory
+        };
+      }
+    });
+
+    render(<App bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+
+    expect(await screen.findByText("旧安装也可补建，创建后直接启动最新 ChatGPT")).toBeVisible();
+    fireEvent.click(await screen.findByRole("button", { name: "创建ChatGPT 桌面入口" }));
+    const createdMessage = await screen.findByText("已创建 ChatGPT 桌面快捷方式");
+    expect(createdMessage.closest(".shortcut-setting")).toHaveTextContent("ChatGPT 桌面入口");
+    fireEvent.click(screen.getByRole("button", { name: "修复ChatGPT 桌面入口" }));
+    await waitFor(() => expect(requests).toEqual([true, true]));
+    expect(screen.getByRole("button", { name: "移除ChatGPT 桌面入口" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "移除ChatGPT 桌面入口" }));
+    const removedMessage = await screen.findByText("已移除 ChatGPT 桌面快捷方式");
+    expect(removedMessage.closest(".shortcut-setting")).toHaveTextContent("ChatGPT 桌面入口");
+    expect(requests).toEqual([true, true, false]);
+  });
+
+  test("settings create and remove the Chinese assistant desktop shortcut", async () => {
+    const requests: boolean[] = [];
+    let inventory = { ...versionInventory, assistantDesktopShortcutExists: false };
+    const bridge = makeBridge({
+      installed: true,
+      getVersionInventory: async () => inventory,
+      setAssistantDesktopShortcut: async (enabled) => {
+        requests.push(enabled);
+        inventory = { ...inventory, assistantDesktopShortcutExists: enabled };
+        return {
+          applied: true,
+          message: enabled
+            ? "已创建中文助手桌面快捷方式"
+            : "已移除中文助手桌面快捷方式",
+          inventory
+        };
+      }
+    });
+
+    render(<App bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+
+    expect(await screen.findByText("需要时可补建独立的中文助手桌面入口")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "创建中文助手桌面入口" }));
+    const createdMessage = await screen.findByText("已创建中文助手桌面快捷方式");
+    expect(createdMessage.closest(".shortcut-setting")).toHaveTextContent("中文助手桌面入口");
+    fireEvent.click(screen.getByRole("button", { name: "修复中文助手桌面入口" }));
+    await waitFor(() => expect(requests).toEqual([true, true]));
+
+    fireEvent.click(screen.getByRole("button", { name: "移除中文助手桌面入口" }));
+    const removedMessage = await screen.findByText("已移除中文助手桌面快捷方式");
+    expect(removedMessage.closest(".shortcut-setting")).toHaveTextContent("中文助手桌面入口");
+    expect(requests).toEqual([true, true, false]);
   });
 
   test("installed mode keeps the loading progress visible while update checks are pending", async () => {
@@ -1121,8 +1322,8 @@ function makeBridge(
   const bridge: AppBridge = {
     getAppStatus: async () => appStatus,
     getInstallerDefaults: async () => installerDefaults,
-    startInstall: async () => ({ accepted: true }),
-    cancelInstall: async () => ({ accepted: true }),
+    startInstall: async () => ({ accepted: true, cancellable: true }),
+    cancelInstall: async () => ({ accepted: true, cancellable: true }),
     getInstallStatus: async () => null,
     onInstallEvent: () => () => {},
     getProxyLaunchStatus: async () =>
@@ -1155,10 +1356,22 @@ function makeBridge(
       message: `已删除版本 ${version}`,
       inventory: versionInventory
     }),
-    saveRetentionSettings: async (request) => ({
+    saveVersionSettings: async (request) => ({
       applied: true,
-      message: request.keepAllVersions ? "已设置为全部保留" : "已保存版本保留设置",
+      message: "版本策略已保存",
       inventory: { ...versionInventory, ...request }
+    }),
+    setDesktopShortcut: async (enabled) => ({
+      applied: true,
+      message: enabled ? "已创建 ChatGPT 桌面快捷方式" : "已移除 ChatGPT 桌面快捷方式",
+      inventory: { ...versionInventory, desktopShortcutExists: enabled }
+    }),
+    setAssistantDesktopShortcut: async (enabled) => ({
+      applied: true,
+      message: enabled
+        ? "已创建中文助手桌面快捷方式"
+        : "已移除中文助手桌面快捷方式",
+      inventory: { ...versionInventory, assistantDesktopShortcutExists: enabled }
     }),
     checkUpdateStatus: async () => updateStatus,
     startUpdate: async () => ({ accepted: true }),
