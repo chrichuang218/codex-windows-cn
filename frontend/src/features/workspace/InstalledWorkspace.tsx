@@ -4,9 +4,11 @@ import {
   CircleAlert,
   Download,
   ExternalLink,
+  FolderOpen,
   HardDrive,
   Layers3,
   LayoutDashboard,
+  Link2,
   LoaderCircle,
   MonitorUp,
   Play,
@@ -38,6 +40,13 @@ const updateDeferActionOrder: Exclude<UpdateAction, "updateNow">[] = [
   "skipThisVersion",
   "never"
 ];
+
+const compactUpdatePolicyLabels: Record<UpdatePolicy, string> = {
+  always: "每次",
+  daily: "每天",
+  weekly: "每周",
+  never: "从不"
+};
 
 type PendingSwitch = {
   targetVersion: string | null;
@@ -182,7 +191,6 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
         updatePolicy
       });
       commitInventory(result.inventory);
-      setActionMessage(result.message);
       return true;
     } catch (cause) {
       setActionMessage(errorMessage(cause, "保存版本策略失败"));
@@ -432,6 +440,22 @@ function OverviewPanel({
           label="保留策略"
           value={inventory?.keepAllVersions ? "全部保留" : `最近 ${inventory?.keepVersions ?? 5} 个`}
         />
+        <Metric
+          icon={<FolderOpen size={17} />}
+          label="安装位置"
+          title={inventory?.root}
+          value={inventory?.root || "正在读取"}
+        />
+        <Metric
+          icon={<Download size={17} />}
+          label="下载方式"
+          value={inventory ? fetcherLabels[inventory.fetcher] : "正在读取"}
+        />
+        <Metric
+          icon={<Link2 size={17} />}
+          label="稳定入口"
+          value={inventory?.useCurrentJunction ? "versions\\current" : "未启用"}
+        />
       </div>
 
       <div className="update-band">
@@ -645,95 +669,96 @@ function SettingsPanel({
         </div>
       </div>
 
-      <section className="settings-section">
-        <div className="settings-copy">
-          <strong>自动保留</strong>
-          <span>更新完成后清理超出策略且未运行的版本</span>
+      <section className="strategy-settings" aria-label="版本策略设置">
+        <div className="strategy-row">
+          <div className="settings-copy">
+            <strong>自动保留</strong>
+            <span>更新完成后清理超出策略且未运行的版本</span>
+          </div>
+          <div className="strategy-control-group retention-controls">
+            <div className="segmented" aria-label="版本保留模式">
+              <button
+                aria-pressed={!keepAll}
+                onClick={() => {
+                  if (!keepAll) return;
+                  setKeepAll(false);
+                  markDirty();
+                }}
+                type="button"
+              >
+                最近版本
+              </button>
+              <button
+                aria-pressed={keepAll}
+                onClick={() => {
+                  if (keepAll) return;
+                  setKeepAll(true);
+                  markDirty();
+                }}
+                type="button"
+              >
+                全部保留
+              </button>
+            </div>
+            <label className="count-control">
+              <span>数量</span>
+              <input
+                aria-label="自动保留版本数量"
+                disabled={keepAll}
+                max={20}
+                min={1}
+                onChange={(event) => {
+                  setCount(clamp(Number(event.target.value), 1, 20));
+                  markDirty();
+                }}
+                type="number"
+                value={count}
+              />
+            </label>
+          </div>
         </div>
-        <div className="segmented" aria-label="版本保留模式">
-          <button
-            aria-pressed={!keepAll}
-            onClick={() => {
-              setKeepAll(false);
-              markDirty();
-            }}
-            type="button"
-          >
-            最近版本
-          </button>
-          <button
-            aria-pressed={keepAll}
-            onClick={() => {
-              setKeepAll(true);
-              markDirty();
-            }}
-            type="button"
-          >
-            全部保留
-          </button>
-        </div>
-        {!keepAll ? (
-          <label className="count-control">
-            <span>数量</span>
-            <input
-              aria-label="自动保留版本数量"
-              max={20}
-              min={1}
-              onChange={(event) => {
-                setCount(clamp(Number(event.target.value), 1, 20));
-                markDirty();
-              }}
-              type="number"
-              value={count}
-            />
-          </label>
-        ) : null}
-        <button
-          className="button primary save-settings"
-          disabled={busy || !inventory || !dirty}
-          onClick={() => void save()}
-          type="button"
-        >
-          {saving ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={15} />}
-          {saving ? "保存中" : dirty ? "保存设置" : "已保存"}
-        </button>
-      </section>
 
-      <section className="settings-section install-details">
-        <div className="settings-copy">
-          <strong>安装位置</strong>
-          <span>{inventory?.root || "正在读取"}</span>
-        </div>
-        <div className="settings-copy">
-          <strong>下载方式</strong>
-          <span>{inventory ? fetcherLabels[inventory.fetcher] : "正在读取"}</span>
-        </div>
-        <div className="settings-copy">
-          <strong>稳定入口</strong>
-          {inventory && !inventory.useCurrentJunction ? <span>未启用</span> : null}
-          {inventory?.useCurrentJunction ? (
-            <code className="settings-detail">versions\current</code>
-          ) : null}
-        </div>
-        <label className="settings-copy">
-          <strong>自动检查更新</strong>
-          <select
+        <div className="strategy-row">
+          <div className="settings-copy">
+            <strong>自动检查更新</strong>
+            <span>控制 ChatGPT 与中文助手的后台检查频率</span>
+          </div>
+          <div
             aria-label="自动检查更新频率"
-            className="settings-policy-select"
-            disabled={!inventory}
-            onChange={(event) => {
-              setUpdatePolicy(event.target.value as UpdatePolicy);
-              markDirty();
-            }}
-            value={updatePolicy}
+            className="settings-policy-options"
+            role="group"
           >
             {(Object.keys(updatePolicyLabels) as UpdatePolicy[]).map((policy) => (
-              <option key={policy} value={policy}>
-                {updatePolicyLabels[policy]}
-              </option>
+              <button
+                aria-label={updatePolicyLabels[policy]}
+                aria-pressed={updatePolicy === policy}
+                disabled={!inventory}
+                key={policy}
+                onClick={() => {
+                  if (updatePolicy === policy) return;
+                  setUpdatePolicy(policy);
+                  markDirty();
+                }}
+                title={updatePolicyLabels[policy]}
+                type="button"
+              >
+                {compactUpdatePolicyLabels[policy]}
+              </button>
             ))}
-          </select>
-        </label>
+          </div>
+        </div>
+
+        <div className="strategy-footer">
+          <button
+            className="button primary save-settings"
+            disabled={busy || !inventory || !dirty}
+            onClick={() => void save()}
+            type="button"
+          >
+            {saving ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={15} />}
+            {saving ? "保存中" : dirty ? "保存设置" : "已保存"}
+          </button>
+        </div>
       </section>
 
       <ShortcutSetting
@@ -998,8 +1023,18 @@ function NavButton({
   );
 }
 
-function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
-  return <div className="metric-item">{icon}<span>{label}<strong>{value}</strong></span></div>;
+function Metric({
+  icon,
+  label,
+  title,
+  value
+}: {
+  icon: React.ReactNode;
+  label: string;
+  title?: string;
+  value: string;
+}) {
+  return <div className="metric-item" title={title}>{icon}<span>{label}<strong>{value}</strong></span></div>;
 }
 
 function ConfirmDialog({

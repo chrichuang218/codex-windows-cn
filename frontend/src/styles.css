@@ -1153,8 +1153,17 @@ a:focus-visible {
   color: var(--console-blue);
 }
 
-.metric-item + .metric-item {
+.metric-item {
+  border-top: 1px solid var(--console-line);
   border-left: 1px solid var(--console-line);
+}
+
+.metric-item:nth-child(-n + 3) {
+  border-top: 0;
+}
+
+.metric-item:nth-child(3n + 1) {
+  border-left: 0;
 }
 
 .metric-item span {
@@ -1452,10 +1461,36 @@ a:focus-visible {
   font-size: 11px;
 }
 
-.settings-detail {
-  width: max-content;
-  color: var(--console-muted);
-  font-size: 9px;
+.strategy-settings {
+  display: grid;
+  gap: 14px;
+  border-bottom: 1px solid var(--console-line);
+  padding: 4px 0 20px;
+}
+
+.strategy-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(300px, 360px);
+  align-items: center;
+  gap: 20px;
+}
+
+.strategy-control-group {
+  width: 100%;
+  min-width: 0;
+}
+
+.retention-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.strategy-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
 }
 
 .segmented {
@@ -1504,30 +1539,67 @@ a:focus-visible {
   outline: none;
 }
 
-.install-details {
-  grid-template-columns: 1.5fr 0.8fr 0.8fr 0.8fr;
-  align-items: start;
+.count-control:has(input:disabled) {
+  opacity: 0.42;
 }
 
-.settings-policy-select {
+.count-control input:disabled {
+  cursor: not-allowed;
+}
+
+.settings-policy-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2px;
   width: 100%;
-  max-width: 120px;
-  height: 29px;
   border: 1px solid var(--console-line-strong);
-  border-radius: 5px;
-  padding: 0 7px;
-  color: var(--console-text);
-  background: var(--console-surface-strong);
-  outline: none;
-  font-size: 10px;
+  border-radius: 6px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.settings-policy-options button {
+  min-width: 0;
+  min-height: 25px;
+  border: 0;
+  border-radius: 4px;
+  padding: 0 3px;
+  color: var(--console-muted);
+  background: transparent;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.settings-policy-options button:hover:not(:disabled) {
+  color: var(--console-soft);
+  background: rgba(118, 220, 205, 0.06);
+}
+
+.settings-policy-options button[aria-pressed="true"] {
+  color: var(--console-mint-ink);
+  background: var(--console-mint);
+  box-shadow: 0 4px 12px rgba(118, 220, 205, 0.12);
+}
+
+.settings-policy-options button:disabled {
+  cursor: wait;
+  opacity: 0.58;
 }
 
 .shortcut-setting {
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
 }
 
 .shortcut-actions {
   display: flex;
+  align-self: center;
+  align-items: center;
+  flex-wrap: nowrap;
   gap: 8px;
 }
 
@@ -1763,15 +1835,19 @@ a:focus-visible {
     grid-column: 2;
   }
 
-  .install-details {
-    grid-template-columns: 1fr;
-  }
-
   .shortcut-setting {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 12px;
   }
 
   .shortcut-actions {
     justify-content: flex-end;
+  }
+}
+
+@media (max-width: 620px) {
+  .strategy-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 9px;
   }
 }

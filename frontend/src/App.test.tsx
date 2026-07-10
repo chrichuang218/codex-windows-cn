@@ -578,6 +578,14 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(screen.getByRole("button", { name: "1 天后提醒" })).toBeVisible();
     expect(screen.getByRole("button", { name: "7 天后提醒" })).toBeVisible();
     expect(screen.getByRole("button", { name: "关闭提醒" })).toBeVisible();
+    const installSummary = screen.getByLabelText("安装摘要");
+    await waitFor(() => {
+      expect(installSummary).toHaveTextContent(
+        "安装位置C:\\Users\\tester\\AppData\\Local\\Codex"
+      );
+      expect(installSummary).toHaveTextContent("下载方式直连 Microsoft Store");
+      expect(installSummary).toHaveTextContent("稳定入口versions\\current");
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "启动 ChatGPT" }));
 
@@ -744,30 +752,46 @@ describe("Codex Windows 中文助手 shell", () => {
     render(<App bridge={bridge} />);
     fireEvent.click(await screen.findByRole("button", { name: "设置" }));
     expect(await screen.findByRole("heading", { name: "保留与维护" })).toBeVisible();
+    expect(screen.getByLabelText("版本策略设置")).toBeVisible();
     expect(screen.getByRole("button", { name: "已保存" })).toBeDisabled();
-    expect(screen.getByText("稳定入口")).toBeVisible();
-    expect(screen.getByText("versions\\current")).toBeVisible();
-    expect(screen.queryByText("已启用")).toBeNull();
-    expect(screen.getByRole("combobox", { name: "自动检查更新频率" })).toHaveValue("daily");
+    expect(screen.queryByText("安装位置")).toBeNull();
+    expect(screen.queryByText("下载方式")).toBeNull();
+    expect(screen.queryByText("稳定入口")).toBeNull();
+    expect(screen.getByRole("group", { name: "自动检查更新频率" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "每天" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    fireEvent.click(screen.getByRole("button", { name: "最近版本" }));
+    fireEvent.click(screen.getByRole("button", { name: "每天" }));
+    expect(screen.getByRole("button", { name: "已保存" })).toBeDisabled();
 
     fireEvent.change(screen.getByRole("spinbutton", { name: "自动保留版本数量" }), {
       target: { value: "7" }
     });
-    fireEvent.change(screen.getByRole("combobox", { name: "自动检查更新频率" }), {
-      target: { value: "always" }
-    });
+    fireEvent.click(screen.getByRole("button", { name: "每次启动" }));
     expect(screen.getByRole("button", { name: "保存设置" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
-    expect(await screen.findByText("版本策略已保存")).toBeVisible();
-    expect(screen.getByRole("button", { name: "已保存" })).toBeDisabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "已保存" })).toBeDisabled());
+    expect(screen.queryByText("版本策略已保存")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "全部保留" }));
+    expect(screen.getByRole("spinbutton", { name: "自动保留版本数量" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
-    expect(await screen.findByText("版本策略已保存")).toBeVisible();
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(screen.queryByText("版本策略已保存")).toBeNull();
     expect(requests).toEqual([
       { keepVersions: 7, keepAllVersions: false, updatePolicy: "always" },
       { keepVersions: 7, keepAllVersions: true, updatePolicy: "always" }
     ]);
+  });
+
+  test("settings use an in-app update frequency control instead of a native dropdown", async () => {
+    render(<App bridge={makeBridge({ installed: true })} />);
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+
+    expect(screen.queryByRole("combobox", { name: "自动检查更新频率" })).toBeNull();
+    expect(screen.getByRole("group", { name: "自动检查更新频率" })).toBeVisible();
   });
 
   test("settings keep an unsaved keep-all selection while inventory refreshes", async () => {
@@ -779,7 +803,7 @@ describe("Codex Windows 中文助手 shell", () => {
         inventoryReads += 1;
         return {
           ...versionInventory,
-          root: returnRefreshedInventory ? "C:\\refreshed" : versionInventory.root
+          assistantDesktopShortcutExists: returnRefreshedInventory
         };
       }
     });
@@ -791,16 +815,18 @@ describe("Codex Windows 中文助手 shell", () => {
     const keepAllButton = screen.getByRole("button", { name: "全部保留" });
     fireEvent.click(keepAllButton);
     expect(keepAllButton).toHaveAttribute("aria-pressed", "true");
-    expect(screen.queryByRole("spinbutton", { name: "自动保留版本数量" })).toBeNull();
+    expect(screen.getByRole("spinbutton", { name: "自动保留版本数量" })).toBeDisabled();
 
     const readsBeforeRefresh = inventoryReads;
     returnRefreshedInventory = true;
     fireEvent.focus(window);
     await waitFor(() => expect(inventoryReads).toBeGreaterThan(readsBeforeRefresh));
-    expect(await screen.findByText("C:\\refreshed")).toBeVisible();
+    expect(
+      await screen.findByRole("button", { name: "修复中文助手桌面入口" })
+    ).toBeVisible();
 
     expect(keepAllButton).toHaveAttribute("aria-pressed", "true");
-    expect(screen.queryByRole("spinbutton", { name: "自动保留版本数量" })).toBeNull();
+    expect(screen.getByRole("spinbutton", { name: "自动保留版本数量" })).toBeDisabled();
   });
 
   test("settings ignore an inventory response started before a successful save", async () => {
@@ -831,7 +857,8 @@ describe("Codex Windows 中文助手 shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "全部保留" }));
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
-    expect(await screen.findByText("版本策略已保存")).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("button", { name: "已保存" })).toBeDisabled());
+    expect(screen.queryByText("版本策略已保存")).toBeNull();
 
     await act(async () => {
       resolveStaleRefresh?.({ ...versionInventory, root: "C:\\stale" });
