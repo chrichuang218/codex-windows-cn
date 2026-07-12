@@ -28,6 +28,7 @@ const installerDefaults: InstallerDefaults = {
       createDesktopShortcut: false,
       createAssistantDesktopShortcut: false,
       registerUninstall: false,
+      registerCodexProtocol: false,
       keepVersions: 5,
       keepAllVersions: false,
       useCurrentJunction: true
@@ -40,6 +41,7 @@ const installerDefaults: InstallerDefaults = {
       createDesktopShortcut: true,
       createAssistantDesktopShortcut: false,
       registerUninstall: true,
+      registerCodexProtocol: true,
       keepVersions: 5,
       keepAllVersions: false,
       useCurrentJunction: true
@@ -52,6 +54,7 @@ const installerDefaults: InstallerDefaults = {
       createDesktopShortcut: true,
       createAssistantDesktopShortcut: false,
       registerUninstall: true,
+      registerCodexProtocol: true,
       keepVersions: 5,
       keepAllVersions: false,
       useCurrentJunction: true
@@ -100,6 +103,7 @@ const versionInventory: VersionInventory = {
   keepVersions: 5,
   keepAllVersions: false,
   updatePolicy: "daily",
+  codexProtocol: { kind: "ready", desired: true },
   desktopShortcutExists: false,
   assistantDesktopShortcutExists: false,
   fetcher: "direct",
@@ -241,12 +245,14 @@ describe("Codex Windows 中文助手 shell", () => {
     let submittedRoot = "";
     let submittedDesktopShortcut = false;
     let submittedAssistantDesktopShortcut = false;
+    let submittedCodexProtocol = false;
     const bridge = makeBridge({
       installed: false,
       startInstall: async (request) => {
         submittedRoot = request.root;
         submittedDesktopShortcut = request.createDesktopShortcut;
         submittedAssistantDesktopShortcut = request.createAssistantDesktopShortcut;
+        submittedCodexProtocol = request.registerCodexProtocol;
         return { accepted: true, cancellable: true };
       }
     });
@@ -278,6 +284,11 @@ describe("Codex Windows 中文助手 shell", () => {
     });
     expect(assistantDesktopShortcut).not.toBeChecked();
     fireEvent.click(assistantDesktopShortcut);
+    const codexProtocol = screen.getByRole("checkbox", {
+      name: "支持 CLI /app（注册 codex://）"
+    });
+    expect(codexProtocol).not.toBeChecked();
+    fireEvent.click(codexProtocol);
 
     fireEvent.click(screen.getByRole("button", { name: "安装" }));
 
@@ -288,6 +299,7 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(submittedRoot).toBe("D:\\Tools\\CodexPortable");
     expect(submittedDesktopShortcut).toBe(true);
     expect(submittedAssistantDesktopShortcut).toBe(true);
+    expect(submittedCodexProtocol).toBe(true);
   });
 
   test("shows installation progress and completion as exclusive wizard states", async () => {
@@ -941,6 +953,86 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(requests).toEqual([true, true, false]);
   });
 
+  test("settings create repair and remove the CLI app conversation link", async () => {
+    const requests: Array<[boolean, boolean]> = [];
+    let inventory: VersionInventory = {
+      ...versionInventory,
+      codexProtocol: { kind: "missing" as const, desired: false }
+    };
+    const bridge = makeBridge({
+      installed: true,
+      getVersionInventory: async () => inventory,
+      setCodexProtocol: async (enabled, replaceOther) => {
+        requests.push([enabled, replaceOther]);
+        inventory = {
+          ...inventory,
+          codexProtocol: {
+            kind: enabled ? ("ready" as const) : ("missing" as const),
+            desired: enabled
+          }
+        };
+        return {
+          applied: true,
+          message: enabled
+            ? "已创建或修复 codex:// 会话链接"
+            : "已停止由当前安装处理 codex:// 会话链接",
+          inventory
+        };
+      }
+    });
+
+    render(<App bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "创建CLI /app 会话链接" })
+    );
+    expect(await screen.findByText("已创建或修复 codex:// 会话链接")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "修复CLI /app 会话链接" }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    fireEvent.click(screen.getByRole("button", { name: "移除CLI /app 会话链接" }));
+    expect(await screen.findByText("已停止由当前安装处理 codex:// 会话链接")).toBeVisible();
+    expect(requests).toEqual([
+      [true, false],
+      [true, false],
+      [false, false]
+    ]);
+  });
+
+  test("settings require an explicit takeover when another install owns codex protocol", async () => {
+    const requests: Array<[boolean, boolean]> = [];
+    const inventory = {
+      ...versionInventory,
+      codexProtocol: { kind: "otherOwner" as const, desired: true }
+    };
+    const bridge = makeBridge({
+      installed: true,
+      getVersionInventory: async () => inventory,
+      setCodexProtocol: async (enabled, replaceOther) => {
+        requests.push([enabled, replaceOther]);
+        return {
+          applied: true,
+          message: "已将 codex:// 会话链接切换到当前安装",
+          inventory: {
+            ...inventory,
+            codexProtocol: { kind: "ready" as const, desired: true }
+          }
+        };
+      }
+    });
+
+    render(<App bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+
+    expect(await screen.findByText("codex:// 当前由其他 Codex 安装处理")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "移除CLI /app 会话链接" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "设为当前安装处理 codex://" }));
+
+    expect(await screen.findByText("已将 codex:// 会话链接切换到当前安装")).toBeVisible();
+    expect(requests).toEqual([[true, true]]);
+  });
+
   test("installed mode keeps the loading progress visible while update checks are pending", async () => {
     render(
       <App
@@ -1482,6 +1574,16 @@ function makeBridge(
         ? "已创建中文助手桌面快捷方式"
         : "已移除中文助手桌面快捷方式",
       inventory: { ...versionInventory, assistantDesktopShortcutExists: enabled }
+    }),
+    setCodexProtocol: async (enabled) => ({
+      applied: true,
+      message: enabled
+        ? "已创建或修复 codex:// 会话链接"
+        : "已停止由当前安装处理 codex:// 会话链接",
+      inventory: {
+        ...versionInventory,
+        codexProtocol: { kind: enabled ? "ready" : "missing", desired: enabled }
+      }
     }),
     checkUpdateStatus: async () => updateStatus,
     startUpdate: async () => ({ accepted: true }),

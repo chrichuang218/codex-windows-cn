@@ -168,6 +168,7 @@ pub fn run_worker(ctx: UninstallContext, on_msg: impl Fn(UninstallMsg)) {
         phase: "Removing registry entries".into(),
         detail: "".into(),
     });
+    let _ = registry::remove_codex_protocol_if_owned(ctx.cfg.install_mode, root);
     let _ = registry::remove(ctx.cfg.install_mode);
 
     on_msg(UninstallMsg::Phase {

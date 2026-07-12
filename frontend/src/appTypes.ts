@@ -24,6 +24,7 @@ export type InstallForm = {
   createDesktopShortcut: boolean;
   createAssistantDesktopShortcut: boolean;
   registerUninstall: boolean;
+  registerCodexProtocol: boolean;
   keepVersions: number;
   keepAllVersions: boolean;
   fetcher: Fetcher;

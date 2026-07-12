@@ -40,6 +40,8 @@ pub struct InstallOptions {
     /// Write the Add/Remove Programs registry entry so the user can
     /// uninstall via Windows Settings → Apps. Off by default for Portable.
     pub register_uninstall: bool,
+    /// Maintain the `codex://` URL protocol for CLI `/app` handoff.
+    pub register_codex_protocol: bool,
     pub keep_versions: u32,
     pub keep_all_versions: bool,
     pub fetcher: Fetcher,
@@ -212,6 +214,15 @@ fn update_inner(
     // the freshly-written install-root config takes effect on next launch.
     cfg.save_install(root)?;
 
+    if let Err(error) = sync_launch_surface(
+        root,
+        cfg.install_mode,
+        cfg.use_current_junction,
+        cfg.register_codex_protocol_preference(),
+    ) {
+        report_protocol_sync_error("更新", &error);
+    }
+
     // At this point the update is usable: the new version is extracted and
     // updater.json points at it. Keep Windows shell integration and cleanup
     // out of the critical path so slow AV / registry / shortcut work cannot
@@ -323,6 +334,7 @@ fn run_inner(
         },
         use_current_junction: opts.use_current_junction,
         register_uninstall: opts.register_uninstall,
+        register_codex_protocol: Some(opts.register_codex_protocol),
         known_latest_launcher: None,
         skipped_launcher_version: None,
         launcher_suppress_until_unix: None,
@@ -332,6 +344,15 @@ fn run_inner(
     // overlay from a previous install at this same root.
     check_cancel(cancel)?;
     cfg.save_install(&opts.root)?;
+
+    if let Err(error) = sync_launch_surface(
+        &opts.root,
+        cfg.install_mode,
+        cfg.use_current_junction,
+        cfg.register_codex_protocol_preference(),
+    ) {
+        report_protocol_sync_error("安装", &error);
+    }
 
     // --- 5. Best-effort Windows integration + cleanup -----------------------
     //
@@ -378,11 +399,6 @@ struct PostInstallWork {
 }
 
 fn run_post_install_work(work: PostInstallWork) {
-    if work.use_current_junction {
-        if let Err(e) = junction::set_current(&work.root, &work.version) {
-            eprintln!("warn: couldn't set versions/current junction: {e:#}");
-        }
-    }
     if work.create_shortcut {
         if let Err(e) = write_start_menu_shortcut(&work.root, work.mode) {
             eprintln!("warn: shortcut: {e:#}");
@@ -429,16 +445,90 @@ struct PostUpdateWork {
     msix_path: PathBuf,
 }
 
-fn run_post_update_work(work: PostUpdateWork) {
-    let junction_link = work.root.join("versions").join("current");
-    if work.use_current_junction {
-        if let Err(e) = junction::set_current(&work.root, &work.version) {
-            eprintln!("warn: couldn't set versions/current junction: {e:#}");
-        }
-    } else {
-        let _ = junction::remove(&junction_link);
+fn sync_launch_surface_with(
+    root: &Path,
+    use_current_junction: bool,
+    mut sync_protocol: impl FnMut(&Path) -> Result<()>,
+) -> Result<()> {
+    let current = root.join("versions").join("current");
+    if !use_current_junction {
+        junction::remove(&current)?;
     }
+    let target = crate::versions::resolve_launch_target(root, use_current_junction, None)?;
+    sync_protocol(&target.executable)
+}
 
+fn sync_launch_surface(
+    root: &Path,
+    mode: InstallMode,
+    use_current_junction: bool,
+    preference: Option<bool>,
+) -> Result<()> {
+    sync_launch_surface_with(root, use_current_junction, |handler| {
+        match preference {
+            Some(true) => {
+                if matches!(
+                    registry::register_codex_protocol(mode, root, handler)?,
+                    registry::ProtocolRegistration::PreservedForeign
+                ) {
+                    eprintln!("warn: codex:// is owned by another installation; preserving it");
+                }
+            }
+            Some(false) => {
+                let _ = registry::remove_codex_protocol_if_owned(mode, root)?;
+            }
+            None => {
+                if matches!(
+                    registry::codex_protocol_status(mode, root, handler)?,
+                    registry::CodexProtocolStatus::NeedsRepair
+                ) {
+                    let _ = registry::register_codex_protocol(mode, root, handler)?;
+                }
+            }
+        }
+        Ok(())
+    })
+}
+
+pub fn sync_codex_protocol(root: &Path, cfg: &Config) -> Result<()> {
+    sync_launch_surface(
+        root,
+        cfg.install_mode,
+        cfg.use_current_junction,
+        cfg.register_codex_protocol_preference(),
+    )
+}
+
+pub fn codex_protocol_status(root: &Path, cfg: &Config) -> Result<registry::CodexProtocolStatus> {
+    let target = crate::versions::resolve_launch_target(root, cfg.use_current_junction, None)?;
+    registry::codex_protocol_status(cfg.install_mode, root, &target.executable)
+}
+
+pub fn enable_codex_protocol(
+    root: &Path,
+    cfg: &Config,
+    replace_foreign: bool,
+) -> Result<registry::ProtocolRegistration> {
+    let target = crate::versions::resolve_launch_target(root, cfg.use_current_junction, None)?;
+    if replace_foreign {
+        registry::replace_codex_protocol(cfg.install_mode, root, &target.executable)
+    } else {
+        registry::register_codex_protocol(cfg.install_mode, root, &target.executable)
+    }
+}
+
+pub fn disable_codex_protocol(root: &Path, cfg: &Config) -> Result<registry::ProtocolRemoval> {
+    registry::remove_codex_protocol_if_owned(cfg.install_mode, root)
+}
+
+fn report_protocol_sync_error(operation: &str, error: &anyhow::Error) {
+    eprintln!("warn: codex protocol sync after {operation}: {error:#}");
+    dialogs::error(&format!(
+        "桌面应用{operation}已完成，但 codex:// 会话链接配置失败：{error:#}\n\n可稍后在中文助手的设置页重试。"
+    ));
+}
+
+fn run_post_update_work(work: PostUpdateWork) {
     match start_menu_shortcut_exists(&work.root, work.mode) {
         Ok(true) => {
             if let Err(e) = write_start_menu_shortcut(&work.root, work.mode) {
@@ -790,6 +880,59 @@ fn check_cancel(cancel: Option<&AtomicBool>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn protocol_test_root(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("codex-windows-cn-{name}-{}", std::process::id()))
+    }
+
+    #[test]
+    fn launch_surface_repairs_current_before_protocol_sync() {
+        let root = protocol_test_root("protocol-current");
+        let version = root.join("versions").join("2.0.0");
+        let handler = version.join("ChatGPT.exe");
+        let _ = junction::remove(&root.join("versions").join("current"));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&version).expect("create version fixture");
+        std::fs::write(&handler, b"handler").expect("write version fixture");
+
+        sync_launch_surface_with(&root, true, |resolved| {
+            assert_eq!(
+                resolved,
+                root.join("versions").join("current").join("ChatGPT.exe")
+            );
+            assert!(resolved.is_file(), "current target must exist before sync");
+            Ok(())
+        })
+        .expect("sync launch surface");
+
+        let _ = junction::remove(&root.join("versions").join("current"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn launch_surface_without_junction_uses_concrete_latest_handler() {
+        let root = protocol_test_root("protocol-concrete");
+        let old = root.join("versions").join("1.0.0");
+        let latest = root.join("versions").join("2.0.0");
+        let handler = latest.join("ChatGPT.exe");
+        let _ = junction::remove(&root.join("versions").join("current"));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&old).expect("create old version fixture");
+        std::fs::create_dir_all(&latest).expect("create latest version fixture");
+        std::fs::write(old.join("ChatGPT.exe"), b"old handler").expect("write old version fixture");
+        std::fs::write(&handler, b"latest handler").expect("write latest version fixture");
+        junction::set_current(&root, "1.0.0").expect("create stale current junction");
+
+        sync_launch_surface_with(&root, false, |resolved| {
+            assert_eq!(resolved, handler);
+            assert!(!root.join("versions").join("current").exists());
+            Ok(())
+        })
+        .expect("sync concrete launch surface");
+
+        let _ = junction::remove(&root.join("versions").join("current"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn update_keeps_configured_direct_fetcher() {

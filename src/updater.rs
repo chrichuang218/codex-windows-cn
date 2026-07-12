@@ -581,6 +581,7 @@ mod tests {
             fetcher: Fetcher::Direct,
             use_current_junction: true,
             register_uninstall: true,
+            register_codex_protocol: Some(true),
             known_latest_launcher: None,
             skipped_launcher_version: None,
             launcher_suppress_until_unix: None,

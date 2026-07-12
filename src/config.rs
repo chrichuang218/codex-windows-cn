@@ -81,6 +81,11 @@ pub struct Config {
     /// Off by default for Portable installs.
     #[serde(default = "default_true")]
     pub register_uninstall: bool,
+    /// Whether this install should maintain the `codex://` URL protocol.
+    /// `None` is a legacy config: User/System installs opt in, Portable
+    /// installs stay registry-free until the user explicitly enables it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub register_codex_protocol: Option<bool>,
     /// Last GitHub release tag we observed for the launcher itself
     /// (this project, not Codex). Compared against `CARGO_PKG_VERSION`
     /// at runtime to detect when a newer launcher is available.
@@ -105,6 +110,15 @@ fn default_true() -> bool {
 }
 
 impl Config {
+    pub fn register_codex_protocol_preference(&self) -> Option<bool> {
+        self.register_codex_protocol
+            .or_else(|| (!matches!(self.install_mode, InstallMode::Portable)).then_some(true))
+    }
+
+    pub fn register_codex_protocol_enabled(&self) -> bool {
+        self.register_codex_protocol_preference().unwrap_or(false)
+    }
+
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let raw = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&raw)?)

@@ -96,6 +96,22 @@ fn legacy_config_defaults_to_five_versions_without_keep_all() {
 
     assert_eq!(cfg.keep_versions, 5);
     assert!(!cfg.keep_all_versions);
+    assert_eq!(cfg.register_codex_protocol, None);
+    assert_eq!(cfg.register_codex_protocol_preference(), Some(true));
+    assert!(cfg.register_codex_protocol_enabled());
+}
+
+#[test]
+fn legacy_portable_config_preserves_protocol_without_opting_in() {
+    let cfg: Config = serde_json::from_value(serde_json::json!({
+        "install_mode": "portable",
+        "current_version": "1.0.0"
+    }))
+    .expect("deserialize legacy portable config");
+
+    assert_eq!(cfg.register_codex_protocol, None);
+    assert_eq!(cfg.register_codex_protocol_preference(), None);
+    assert!(!cfg.register_codex_protocol_enabled());
 }
 
 #[cfg(windows)]

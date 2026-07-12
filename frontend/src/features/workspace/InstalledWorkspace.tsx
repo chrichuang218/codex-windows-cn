@@ -58,7 +58,7 @@ type PendingSwitch = {
   runningVersions: string[];
 };
 
-type BusyAction = "launch" | "delete" | "settings" | "shortcut" | null;
+type BusyAction = "launch" | "delete" | "settings" | "shortcut" | "protocol" | null;
 
 type ShortcutActionFeedback = {
   error: boolean;
@@ -242,6 +242,26 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
     }
   };
 
+  const setCodexProtocol = async (
+    enabled: boolean,
+    replaceOther: boolean
+  ): Promise<ShortcutActionFeedback> => {
+    setBusyAction("protocol");
+    setActionMessage(null);
+    try {
+      const result = await bridge.setCodexProtocol(enabled, replaceOther);
+      commitInventory(result.inventory);
+      return { error: false, message: result.message };
+    } catch (cause) {
+      return {
+        error: true,
+        message: errorMessage(cause, "修改 CLI /app 会话链接失败")
+      };
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   return (
     <main className="console-shell">
       <aside className="console-rail" aria-label="主导航">
@@ -317,6 +337,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
               controller={controller}
               inventory={inventory}
               onSave={saveVersionSettings}
+              onSetCodexProtocol={setCodexProtocol}
               onSetAssistantDesktopShortcut={setAssistantDesktopShortcut}
               onSetDesktopShortcut={setDesktopShortcut}
               saving={busyAction === "settings"}
@@ -589,6 +610,7 @@ function SettingsPanel({
   controller,
   inventory,
   onSave,
+  onSetCodexProtocol,
   onSetAssistantDesktopShortcut,
   onSetDesktopShortcut,
   saving
@@ -598,6 +620,10 @@ function SettingsPanel({
   controller: ReadyAppController;
   inventory: VersionInventory | null;
   onSave: (count: number, keepAll: boolean, updatePolicy: UpdatePolicy) => Promise<boolean>;
+  onSetCodexProtocol: (
+    enabled: boolean,
+    replaceOther: boolean
+  ) => Promise<ShortcutActionFeedback>;
   onSetAssistantDesktopShortcut: (enabled: boolean) => Promise<ShortcutActionFeedback>;
   onSetDesktopShortcut: (enabled: boolean) => Promise<ShortcutActionFeedback>;
   saving: boolean;
@@ -618,6 +644,10 @@ function SettingsPanel({
   const [shortcutFeedback, setShortcutFeedback] = useState<ShortcutActionFeedback | null>(null);
   const [assistantShortcutFeedback, setAssistantShortcutFeedback] =
     useState<ShortcutActionFeedback | null>(null);
+  const [protocolIntent, setProtocolIntent] = useState<"enable" | "replace" | "disable" | null>(
+    null
+  );
+  const [protocolFeedback, setProtocolFeedback] = useState<ShortcutActionFeedback | null>(null);
   const editRevision = useRef(0);
   const savedKeepAll = inventory?.keepAllVersions;
   const savedCount = inventory?.keepVersions;
@@ -668,6 +698,16 @@ function SettingsPanel({
       setAssistantShortcutFeedback(await onSetAssistantDesktopShortcut(enabled));
     } finally {
       setAssistantShortcutIntent(null);
+    }
+  };
+
+  const updateCodexProtocol = async (enabled: boolean, replaceOther = false) => {
+    setProtocolIntent(enabled ? (replaceOther ? "replace" : "enable") : "disable");
+    setProtocolFeedback(null);
+    try {
+      setProtocolFeedback(await onSetCodexProtocol(enabled, replaceOther));
+    } finally {
+      setProtocolIntent(null);
     }
   };
 
@@ -772,6 +812,15 @@ function SettingsPanel({
         </div>
       </section>
 
+      <ProtocolSetting
+        busy={busy}
+        feedback={protocolFeedback}
+        intent={protocolIntent}
+        loaded={!!inventory}
+        onSet={updateCodexProtocol}
+        status={inventory?.codexProtocol ?? null}
+      />
+
       <ShortcutSetting
         busy={busy}
         description={
@@ -818,6 +867,115 @@ function SettingsPanel({
       </section>
 
       {actionMessage ? <p className="inline-message">{actionMessage}</p> : null}
+    </section>
+  );
+}
+
+function ProtocolSetting({
+  busy,
+  feedback,
+  intent,
+  loaded,
+  onSet,
+  status
+}: {
+  busy: boolean;
+  feedback: ShortcutActionFeedback | null;
+  intent: "enable" | "replace" | "disable" | null;
+  loaded: boolean;
+  onSet: (enabled: boolean, replaceOther?: boolean) => Promise<void>;
+  status: VersionInventory["codexProtocol"] | null;
+}) {
+  const description = !status
+    ? "正在读取 codex:// 会话链接状态"
+    : status.kind === "ready"
+      ? "codex:// 已由当前安装处理，可从 CLI /app 直接打开会话"
+      : status.kind === "needsRepair"
+        ? "注册信息不完整或目标版本已变化"
+        : status.kind === "otherOwner"
+          ? "codex:// 当前由其他 Codex 安装处理"
+          : status.desired
+            ? "期望启用，但当前尚未注册"
+            : "让 CLI /app 直接打开当前 Desktop 会话";
+
+  return (
+    <section className="settings-section shortcut-setting">
+      <div className="settings-copy">
+        <strong>CLI /app 会话链接</strong>
+        <span>{description}</span>
+        {feedback ? (
+          <p
+            className={feedback.error ? "shortcut-feedback error" : "shortcut-feedback"}
+            role="status"
+          >
+            {feedback.message}
+          </p>
+        ) : null}
+      </div>
+      <div className="shortcut-actions">
+        {status?.kind === "otherOwner" ? (
+          <button
+            aria-label="设为当前安装处理 codex://"
+            className="button secondary"
+            disabled={busy || !loaded}
+            onClick={() => void onSet(true, true)}
+            type="button"
+          >
+            {intent === "replace" ? (
+              <LoaderCircle className="spin" size={15} />
+            ) : (
+              <Link2 size={15} />
+            )}
+            设为当前安装
+          </button>
+        ) : status?.kind === "ready" || status?.kind === "needsRepair" ? (
+          <>
+            <button
+              aria-label="修复CLI /app 会话链接"
+              className="button secondary"
+              disabled={busy}
+              onClick={() => void onSet(true)}
+              type="button"
+            >
+              {intent === "enable" ? (
+                <LoaderCircle className="spin" size={15} />
+              ) : (
+                <Link2 size={15} />
+              )}
+              修复
+            </button>
+            <button
+              aria-label="移除CLI /app 会话链接"
+              className="button subtle"
+              disabled={busy}
+              onClick={() => void onSet(false)}
+              type="button"
+            >
+              {intent === "disable" ? (
+                <LoaderCircle className="spin" size={15} />
+              ) : (
+                <Trash2 size={15} />
+              )}
+              移除
+            </button>
+          </>
+        ) : (
+          <button
+            aria-label="创建CLI /app 会话链接"
+            className="button secondary"
+            disabled={busy || !loaded}
+            onClick={() => void onSet(true)}
+            type="button"
+          >
+            {intent === "enable" ? (
+              <LoaderCircle className="spin" size={15} />
+            ) : (
+              <Link2 size={15} />
+            )}
+            创建
+          </button>
+        )}
+      </div>
     </section>
   );
 }

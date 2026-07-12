@@ -47,6 +47,7 @@ pub struct InstallModeDefaults {
     pub create_desktop_shortcut: bool,
     pub create_assistant_desktop_shortcut: bool,
     pub register_uninstall: bool,
+    pub register_codex_protocol: bool,
     pub keep_versions: u32,
     pub keep_all_versions: bool,
     pub use_current_junction: bool,
@@ -78,6 +79,8 @@ pub struct InstallRequest {
     #[serde(default)]
     pub create_assistant_desktop_shortcut: bool,
     pub register_uninstall: bool,
+    #[serde(default)]
+    pub register_codex_protocol: bool,
     pub keep_versions: u32,
     pub keep_all_versions: bool,
     pub fetcher: BridgeFetcher,
@@ -166,6 +169,22 @@ pub struct InstalledVersionStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub enum CodexProtocolStatusKind {
+    Missing,
+    Ready,
+    NeedsRepair,
+    OtherOwner,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexProtocolStatus {
+    pub kind: CodexProtocolStatusKind,
+    pub desired: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VersionInventory {
     pub product_name: String,
     pub root: String,
@@ -176,6 +195,7 @@ pub struct VersionInventory {
     pub update_policy: UpdatePolicy,
     pub fetcher: BridgeFetcher,
     pub use_current_junction: bool,
+    pub codex_protocol: CodexProtocolStatus,
     pub desktop_shortcut_exists: bool,
     pub assistant_desktop_shortcut_exists: bool,
     pub versions: Vec<InstalledVersionStatus>,
@@ -517,6 +537,7 @@ pub fn uninstall_confirmation(root: &Path) -> UninstallConfirmation {
             "启动器配置".into(),
             "开始菜单和桌面快捷方式".into(),
             "Windows 卸载入口".into(),
+            "当前安装拥有的 codex:// 会话链接".into(),
         ],
         preserve_items: vec!["Codex/ChatGPT 登录数据".into(), "日志和诊断信息".into()],
     }
@@ -749,6 +770,19 @@ pub fn version_inventory(root: &Path, cfg: &Config) -> anyhow::Result<VersionInv
         update_policy: cfg.update_policy,
         fetcher: bridge_fetcher(cfg.fetcher),
         use_current_junction: cfg.use_current_junction,
+        codex_protocol: CodexProtocolStatus {
+            kind: match installer::codex_protocol_status(root, cfg)? {
+                crate::registry::CodexProtocolStatus::Missing => CodexProtocolStatusKind::Missing,
+                crate::registry::CodexProtocolStatus::Ready => CodexProtocolStatusKind::Ready,
+                crate::registry::CodexProtocolStatus::NeedsRepair => {
+                    CodexProtocolStatusKind::NeedsRepair
+                }
+                crate::registry::CodexProtocolStatus::OtherOwner => {
+                    CodexProtocolStatusKind::OtherOwner
+                }
+            },
+            desired: cfg.register_codex_protocol_enabled(),
+        },
         desktop_shortcut_exists: crate::installer::desktop_shortcut_exists(root, cfg.install_mode)?,
         assistant_desktop_shortcut_exists: crate::installer::assistant_desktop_shortcut_exists(
             root,
@@ -827,6 +861,7 @@ pub fn install_options_from_request(request: InstallRequest) -> Result<InstallOp
         create_desktop_shortcut: request.create_desktop_shortcut,
         create_assistant_desktop_shortcut: request.create_assistant_desktop_shortcut,
         register_uninstall: request.register_uninstall,
+        register_codex_protocol: request.register_codex_protocol,
         keep_versions: request.keep_versions.max(1),
         keep_all_versions: request.keep_all_versions,
         fetcher,
@@ -919,6 +954,7 @@ fn install_mode_defaults(mode: InstallMode) -> InstallModeDefaults {
         create_desktop_shortcut: user_managed,
         create_assistant_desktop_shortcut: false,
         register_uninstall: user_managed,
+        register_codex_protocol: user_managed,
         keep_versions: 5,
         keep_all_versions: false,
         use_current_junction: true,
@@ -1023,6 +1059,14 @@ fn launcher_error_title(message: &str) -> &'static str {
         return "检查启动器更新受限";
     }
     "检查启动器更新失败"
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexProtocolActionResult {
+    pub applied: bool,
+    pub message: String,
+    pub inventory: VersionInventory,
 }
 
 fn launcher_skip_message(reason: &str) -> String {

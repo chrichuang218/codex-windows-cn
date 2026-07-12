@@ -2,9 +2,9 @@
 
 use codex_windows_cn::{
     bridge::{
-        self, AppStatus, BridgeInstallMode, DesktopShortcutActionResult, InstallEvent,
-        InstallRequest, InstallStart, InstallerDefaults, LaunchInstalledRequest, LaunchRequest,
-        LauncherUpdateAction, LauncherUpdateActionResult, LauncherUpdateStart,
+        self, AppStatus, BridgeInstallMode, CodexProtocolActionResult, DesktopShortcutActionResult,
+        InstallEvent, InstallRequest, InstallStart, InstallerDefaults, LaunchInstalledRequest,
+        LaunchRequest, LauncherUpdateAction, LauncherUpdateActionResult, LauncherUpdateStart,
         LauncherUpdateStatus, ProxyLaunchResult, ProxyLaunchStatus, UninstallConfirmation,
         UninstallEvent, UninstallStart, UninstallStatus, UpdateAction, UpdateActionResult,
         UpdateStart, UpdateStatus, VersionActionResult, VersionInventory, VersionSettingsRequest,
@@ -354,6 +354,88 @@ fn apply_assistant_desktop_shortcut(
 }
 
 #[tauri::command]
+fn set_codex_protocol(
+    enabled: bool,
+    replace_other: bool,
+) -> Result<CodexProtocolActionResult, String> {
+    let _guard = lock_runtime_config()?;
+    let (root, mut cfg) = proxy_context()?;
+    let message = if matches!(cfg.install_mode, InstallMode::System) && !elevate::is_elevated() {
+        let action = if !enabled {
+            "remove"
+        } else if replace_other {
+            "replace"
+        } else {
+            "create"
+        };
+        let exit_code = elevate::respawn_elevated_wait(&format!("--set-codex-protocol {action}"))
+            .map_err(|_| {
+            "管理系统级 codex:// 会话链接需要管理员权限，授权未完成".to_string()
+        })?;
+        if exit_code != 0 {
+            return Err("管理员协议配置进程执行失败，未修改 codex:// 会话链接".into());
+        }
+        cfg.register_codex_protocol = Some(enabled);
+        cfg.save_runtime(&root)
+            .map_err(|cause| format!("保存 codex:// 会话链接偏好失败：{cause:#}"))?;
+        protocol_action_message(enabled, replace_other).to_string()
+    } else {
+        let persist_install = matches!(cfg.install_mode, InstallMode::System);
+        apply_codex_protocol_change(&root, &mut cfg, enabled, replace_other, persist_install)?
+    };
+
+    let inventory = bridge::version_inventory(&root, &cfg)
+        .map_err(|cause| format!("刷新 codex:// 会话链接状态失败：{cause:#}"))?;
+    Ok(CodexProtocolActionResult {
+        applied: true,
+        message,
+        inventory,
+    })
+}
+
+fn apply_codex_protocol_change(
+    root: &Path,
+    cfg: &mut Config,
+    enabled: bool,
+    replace_other: bool,
+    persist_install: bool,
+) -> Result<String, String> {
+    if enabled {
+        if matches!(
+            installer::enable_codex_protocol(root, cfg, replace_other)
+                .map_err(|cause| format!("配置 codex:// 会话链接失败：{cause:#}"))?,
+            codex_windows_cn::registry::ProtocolRegistration::PreservedForeign
+        ) {
+            return Err(
+                "codex:// 当前由其他 Codex 安装处理；如需切换，请使用“设为当前安装”".into(),
+            );
+        }
+    } else {
+        let _ = installer::disable_codex_protocol(root, cfg)
+            .map_err(|cause| format!("移除 codex:// 会话链接失败：{cause:#}"))?;
+    }
+
+    cfg.register_codex_protocol = Some(enabled);
+    if persist_install {
+        cfg.save_install(root)
+    } else {
+        cfg.save_runtime(root)
+    }
+    .map_err(|cause| format!("保存 codex:// 会话链接偏好失败：{cause:#}"))?;
+    Ok(protocol_action_message(enabled, replace_other).to_string())
+}
+
+fn protocol_action_message(enabled: bool, replace_other: bool) -> &'static str {
+    if !enabled {
+        "已停止由当前安装处理 codex:// 会话链接"
+    } else if replace_other {
+        "已将 codex:// 会话链接切换到当前安装"
+    } else {
+        "已创建或修复 codex:// 会话链接"
+    }
+}
+
+#[tauri::command]
 fn delete_installed_version(version: String) -> Result<VersionActionResult, String> {
     let _guard = lock_runtime_config()?;
     let (root, mut cfg) = proxy_context()?;
@@ -389,16 +471,20 @@ fn delete_installed_version_inner(
     let running = proxy::running_versions(&root.join("versions"));
     let repair = versions::delete_and_repair(root, cfg, version, &running)
         .map_err(|cause| format!("删除版本失败：{cause:#}"))?;
+    let protocol_warning = installer::sync_codex_protocol(root, cfg)
+        .err()
+        .map(|cause| format!("；codex:// 会话链接刷新失败：{cause:#}"))
+        .unwrap_or_default();
     let inventory = bridge::version_inventory(root, cfg)
         .map_err(|cause| format!("刷新已安装版本失败：{cause:#}"))?;
     Ok(VersionActionResult {
         applied: true,
         message: if repair.current_repaired {
-            format!("已删除版本 {version}")
+            format!("已删除版本 {version}{protocol_warning}")
         } else {
             format!(
-                "已删除版本 {version}；current 入口将在下次启动时重试修复到 {}",
-                repair.default_version
+                "已删除版本 {version}；current 入口将在下次启动时重试修复到 {}{}",
+                repair.default_version, protocol_warning
             )
         },
         inventory,
@@ -836,6 +922,10 @@ enum CliHelperAction {
     DeleteInstalledVersion(String),
     SetDesktopShortcut(bool),
     SetAssistantDesktopShortcut(bool),
+    SetCodexProtocol {
+        enabled: bool,
+        replace_other: bool,
+    },
     InstallSystem {
         request_path: String,
         result_path: String,
@@ -867,6 +957,21 @@ fn parse_cli_helper(mut args: impl Iterator<Item = String>) -> Result<Option<Cli
         "--set-assistant-desktop-shortcut" => match args.next().as_deref() {
             Some("create") => CliHelperAction::SetAssistantDesktopShortcut(true),
             Some("remove") => CliHelperAction::SetAssistantDesktopShortcut(false),
+            _ => return Err(()),
+        },
+        "--set-codex-protocol" => match args.next().as_deref() {
+            Some("create") => CliHelperAction::SetCodexProtocol {
+                enabled: true,
+                replace_other: false,
+            },
+            Some("replace") => CliHelperAction::SetCodexProtocol {
+                enabled: true,
+                replace_other: true,
+            },
+            Some("remove") => CliHelperAction::SetCodexProtocol {
+                enabled: false,
+                replace_other: false,
+            },
             _ => return Err(()),
         },
         "--install-system" => CliHelperAction::InstallSystem {
@@ -911,6 +1016,16 @@ fn run_cli_helper() -> Option<i32> {
         CliHelperAction::SetAssistantDesktopShortcut(enabled) => {
             let result = proxy_context()
                 .and_then(|(root, cfg)| apply_assistant_desktop_shortcut(&root, &cfg, enabled));
+            Some(if result.is_ok() { 0 } else { 1 })
+        }
+        CliHelperAction::SetCodexProtocol {
+            enabled,
+            replace_other,
+        } => {
+            let result = proxy_context().and_then(|(root, mut cfg)| {
+                apply_codex_protocol_change(&root, &mut cfg, enabled, replace_other, true)
+                    .map(|_| ())
+            });
             Some(if result.is_ok() { 0 } else { 1 })
         }
         CliHelperAction::InstallSystem {
@@ -981,6 +1096,7 @@ fn main() {
             save_version_settings,
             set_desktop_shortcut,
             set_assistant_desktop_shortcut,
+            set_codex_protocol,
             delete_installed_version,
             check_update_status,
             apply_update_action,
@@ -1026,6 +1142,27 @@ mod cli_tests {
             Ok(Some(CliHelperAction::SetAssistantDesktopShortcut(false)))
         );
         assert_eq!(
+            parse(&["--set-codex-protocol", "create"]),
+            Ok(Some(CliHelperAction::SetCodexProtocol {
+                enabled: true,
+                replace_other: false,
+            }))
+        );
+        assert_eq!(
+            parse(&["--set-codex-protocol", "replace"]),
+            Ok(Some(CliHelperAction::SetCodexProtocol {
+                enabled: true,
+                replace_other: true,
+            }))
+        );
+        assert_eq!(
+            parse(&["--set-codex-protocol", "remove"]),
+            Ok(Some(CliHelperAction::SetCodexProtocol {
+                enabled: false,
+                replace_other: false,
+            }))
+        );
+        assert_eq!(
             parse(&["--launch-latest"]),
             Ok(Some(CliHelperAction::LaunchLatest))
         );
@@ -1062,6 +1199,7 @@ mod cli_tests {
     fn rejects_invalid_helper_arguments() {
         assert_eq!(parse(&["--set-desktop-shortcut"]), Err(()));
         assert_eq!(parse(&["--set-assistant-desktop-shortcut"]), Err(()));
+        assert_eq!(parse(&["--set-codex-protocol"]), Err(()));
         assert_eq!(parse(&["--launch-latest", "extra"]), Err(()));
         assert_eq!(parse(&["--install-system", "request.json"]), Err(()));
         assert_eq!(parse(&["--update-system"]), Err(()));
