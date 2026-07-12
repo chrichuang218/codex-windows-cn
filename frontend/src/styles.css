@@ -934,6 +934,7 @@ a:focus-visible {
 }
 
 .console-rail nav button {
+  position: relative;
   display: grid;
   place-items: center;
   gap: 5px;
@@ -947,6 +948,18 @@ a:focus-visible {
   cursor: pointer;
   font-size: 10px;
   font-weight: 700;
+}
+
+.nav-alert-dot {
+  position: absolute;
+  top: 6px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--console-bg);
+  border-radius: 50%;
+  background: var(--console-amber);
+  box-shadow: 0 0 0 3px rgba(239, 189, 99, 0.12);
 }
 
 .console-rail nav button:hover,
@@ -1636,6 +1649,21 @@ a:focus-visible {
 .maintenance-strip > button:hover {
   border-color: rgba(130, 174, 245, 0.35);
   background: var(--console-surface-strong);
+}
+
+.maintenance-strip > button.maintenance-update-available {
+  border-color: rgba(239, 189, 99, 0.42);
+  color: var(--console-amber);
+  background: rgba(239, 189, 99, 0.07);
+}
+
+.maintenance-strip > button.maintenance-update-available:hover {
+  border-color: rgba(239, 189, 99, 0.58);
+  background: rgba(239, 189, 99, 0.11);
+}
+
+.maintenance-strip > button.maintenance-update-available small {
+  color: var(--console-amber);
 }
 
 .maintenance-strip .maintenance-danger {

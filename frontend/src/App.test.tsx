@@ -1242,6 +1242,89 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(screen.getByText("卸载日志：C:\\Temp\\codex-uninstall.log")).toBeVisible();
   });
 
+  test("shows launcher update availability before opening the secondary screen", async () => {
+    const { container } = render(<App bridge={makeBridge({ installed: true })} />);
+
+    expect(await screen.findByRole("button", { name: "概览" })).toBeVisible();
+    const settingsButton = screen.getByRole("button", { name: "设置" });
+    expect(settingsButton.querySelector(".nav-alert-dot")).not.toBeNull();
+
+    fireEvent.click(settingsButton);
+    const updateEntry = await screen.findByRole("button", { name: /启动器更新/ });
+    expect(updateEntry).toHaveTextContent("发现 v0.2.0，点击更新");
+    expect(updateEntry).toHaveClass("maintenance-update-available");
+  });
+
+  test.each([
+    [
+      "最新版本",
+      {
+        ...launcherUpdateStatus,
+        kind: "upToDate" as const,
+        title: "启动器已是最新",
+        message: "当前启动器版本 0.1.8",
+        currentVersion: "0.1.8",
+        latestVersion: "0.1.8",
+        actions: []
+      },
+      "已是最新版本 v0.1.8"
+    ],
+    [
+      "检查失败",
+      {
+        ...launcherUpdateStatus,
+        kind: "error" as const,
+        title: "检查启动器更新失败",
+        message: "网络错误",
+        currentVersion: null,
+        latestVersion: null,
+        actions: []
+      },
+      "检查失败，点击查看"
+    ],
+    [
+      "关闭检查",
+      {
+        ...launcherUpdateStatus,
+        kind: "skipped" as const,
+        title: "暂不检查启动器更新",
+        message: "已关闭自动检查更新",
+        currentVersion: null,
+        latestVersion: null,
+        actions: []
+      },
+      "已关闭自动检查更新"
+    ]
+  ])("shows launcher %s status on the settings card", async (_label, status, summary) => {
+    render(
+      <App
+        bridge={makeBridge({
+          installed: true,
+          checkLauncherUpdateStatus: async () => status
+        })}
+      />
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+    expect(await screen.findByRole("button", { name: /启动器更新/ })).toHaveTextContent(summary);
+  });
+
+  test("shows launcher update checking state without opening the secondary screen", async () => {
+    render(
+      <App
+        bridge={makeBridge({
+          installed: true,
+          checkLauncherUpdateStatus: () => new Promise(() => {})
+        })}
+      />
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+    expect(await screen.findByRole("button", { name: /启动器更新/ })).toHaveTextContent(
+      "正在后台检查更新"
+    );
+  });
+
   test("launcher self-update is available as a secondary screen", async () => {
     let startedLauncherUpdate = false;
     let emitLauncherUpdateEvent: ((event: LauncherUpdateEvent) => void) | null = null;

@@ -489,7 +489,7 @@ pub fn launcher_update_status_from_decision(decision: LauncherDecision) -> Launc
         LauncherDecision::Skipped { reason } => LauncherUpdateStatus {
             kind: LauncherUpdateStatusKind::Skipped,
             title: "暂不检查启动器更新".into(),
-            message: reason,
+            message: launcher_skip_message(&reason),
             current_version: None,
             latest_version: None,
             release_url: None,
@@ -1023,6 +1023,22 @@ fn launcher_error_title(message: &str) -> &'static str {
         return "检查启动器更新受限";
     }
     "检查启动器更新失败"
+}
+
+fn launcher_skip_message(reason: &str) -> String {
+    if reason == "update_policy = never" {
+        return "已关闭自动检查更新".into();
+    }
+    if reason.contains("skipped by user") {
+        return "已跳过这个启动器版本".into();
+    }
+    if reason.contains("suppressed") {
+        return "已暂缓启动器更新提醒".into();
+    }
+    if reason == "within cooldown" {
+        return "已按设置检查，稍后会自动再检查".into();
+    }
+    "暂不检查启动器更新".into()
 }
 
 fn launcher_error_message(message: &str) -> String {

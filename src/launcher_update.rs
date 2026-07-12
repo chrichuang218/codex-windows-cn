@@ -11,10 +11,9 @@
 //!      UI, network, update logic) and exits 0.
 //!   4. Atomic-swap: rename running exe to `.old.exe`, move `.new.exe` into
 //!      place. Windows allows renaming a running exe; deleting it would
-//!      fail, hence the rename-then-replace dance. Any prior `.old.exe`
-//!      is overwritten — we keep exactly one rollback artifact.
-//!   5. Caller exits. `.old.exe` is preserved as a manual-rollback file
-//!      until the next successful self-update.
+//!      fail, hence the rename-then-replace dance.
+//!   5. Caller exits. The next normal launcher startup removes `.old.exe`
+//!      after the previous process has released it.
 //!
 //! Files use a `.new.exe` / `.old.exe` suffix (rather than `.exe.new` /
 //! `.exe.old`) so Windows recognizes them as executables — the smoke-test
@@ -28,7 +27,7 @@
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::updater::LAUNCHER_REPO;
 
@@ -66,8 +65,9 @@ fn apply_inner(target_version: &str, on_msg: &dyn Fn(LauncherUpdateMsg)) -> Resu
     let old_path = dir.join("codex-launcher.old.exe");
 
     // If a previous interrupted update left a `.new.exe` lying around, drop
-    // it first — we're about to write a fresh one. `.old.exe` is left
-    // alone (it's the rollback artifact from the prior successful update).
+    // it first — we're about to write a fresh one. A prior `.old.exe` may
+    // still be locked by the previous launcher process, so the swap replaces
+    // it when possible and normal startup retries cleanup later.
     let _ = std::fs::remove_file(&new_path);
 
     let tag = format!("v{target_version}");
@@ -293,24 +293,66 @@ fn wide(p: &Path) -> Vec<u16> {
         .collect()
 }
 
-/// Best-effort: delete a half-written `codex-launcher.new.exe` from a prior
-/// interrupted self-update. Called once at startup. Silent on failure.
-///
-/// `codex-launcher.old.exe` is **deliberately preserved** — it's the
-/// manual-rollback artifact from the previous successful update. The next
-/// successful self-update overwrites it via `MOVEFILE_REPLACE_EXISTING`.
-pub fn cleanup_stale_new_launcher() {
-    let Some(dir) = current_exe_dir() else {
-        return;
-    };
-    let half = dir.join("codex-launcher.new.exe");
-    if half.exists() {
-        let _ = std::fs::remove_file(&half);
+/// Best-effort cleanup for launcher artifacts left by a previous update.
+pub fn cleanup_stale_launchers(dir: &Path) {
+    for name in ["codex-launcher.new.exe", "codex-launcher.old.exe"] {
+        let path = dir.join(name);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                // The previous launcher or security software may still hold
+                // the file. Normal startup retries this cleanup next time.
+                eprintln!("启动器残留清理失败（{}）：{error}", path.display());
+            }
+        }
     }
 }
 
-fn current_exe_dir() -> Option<PathBuf> {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+#[cfg(test)]
+mod tests {
+    use super::cleanup_stale_launchers;
+
+    #[test]
+    fn startup_cleanup_removes_new_and_old_launcher_artifacts() {
+        let root =
+            std::env::temp_dir().join(format!("codex-launcher-cleanup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let new_path = root.join("codex-launcher.new.exe");
+        let old_path = root.join("codex-launcher.old.exe");
+        std::fs::write(&new_path, b"new").unwrap();
+        std::fs::write(&old_path, b"old").unwrap();
+
+        cleanup_stale_launchers(&root);
+        cleanup_stale_launchers(&root);
+
+        assert!(!new_path.exists());
+        assert!(!old_path.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn startup_cleanup_retries_after_a_file_becomes_deletable() {
+        let root = std::env::temp_dir().join(format!(
+            "codex-launcher-cleanup-retry-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let old_path = root.join("codex-launcher.old.exe");
+        std::fs::create_dir_all(&old_path).unwrap();
+
+        cleanup_stale_launchers(&root);
+        assert!(old_path.exists());
+
+        std::fs::remove_dir(&old_path).unwrap();
+        std::fs::write(&old_path, b"old").unwrap();
+        cleanup_stale_launchers(&root);
+
+        assert!(!old_path.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

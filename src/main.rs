@@ -957,6 +957,12 @@ fn main() {
         return;
     };
 
+    if let Ok(running) = std::env::current_exe() {
+        if let Some(dir) = running.parent() {
+            launcher_update::cleanup_stale_launchers(dir);
+        }
+    }
+
     tauri::Builder::default()
         .setup(|app| {
             install_main_window_show_fallback(app.handle().clone());

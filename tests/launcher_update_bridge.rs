@@ -24,6 +24,23 @@ fn launcher_release_source_uses_this_project_repository() {
 }
 
 #[test]
+fn normal_startup_cleans_previous_launcher_artifacts() {
+    let source = include_str!("../src/main.rs");
+    let helper_exit = source
+        .find("if let Some(exit_code) = run_cli_helper()")
+        .expect("main should preserve CLI helper handling");
+    let cleanup = source
+        .find("launcher_update::cleanup_stale_launchers(dir);")
+        .expect("normal startup should clean stale launcher artifacts");
+    let single_instance = source
+        .find("let Some(_single_instance_guard) = claim_single_instance_or_focus_existing()")
+        .expect("main should preserve single-instance handling");
+
+    assert!(single_instance > helper_exit);
+    assert!(cleanup > single_instance);
+}
+
+#[test]
 fn launcher_update_available_decision_becomes_chinese_status_with_actions() {
     let status = launcher_update_status_from_decision(LauncherDecision::Available {
         current: "0.1.2".into(),
@@ -67,6 +84,21 @@ fn launcher_rate_limit_error_becomes_short_chinese_status() {
         "GitHub 暂时限制了未登录接口请求，稍后会自动重试。"
     );
     assert_eq!(status.actions, Vec::<LauncherUpdateAction>::new());
+}
+
+#[test]
+fn launcher_skipped_reason_becomes_short_chinese_status() {
+    let status = launcher_update_status_from_decision(LauncherDecision::Skipped {
+        reason: "update_policy = never".into(),
+    });
+
+    assert_eq!(status.kind, LauncherUpdateStatusKind::Skipped);
+    assert_eq!(status.message, "已关闭自动检查更新");
+
+    let unknown = launcher_update_status_from_decision(LauncherDecision::Skipped {
+        reason: "unexpected internal reason".into(),
+    });
+    assert_eq!(unknown.message, "暂不检查启动器更新");
 }
 
 #[test]

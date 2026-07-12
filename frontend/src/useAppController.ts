@@ -131,6 +131,7 @@ export function useAppController(bridge: AppBridge) {
   const [updateCheckReady, setUpdateCheckReady] = useState(false);
   const [launcherUpdateStatus, setLauncherUpdateStatus] =
     useState<LoadedAppData["launcherUpdateStatus"]>(fallbackLauncherUpdateStatus);
+  const [launcherUpdateCheckReady, setLauncherUpdateCheckReady] = useState(false);
   const [uninstallConfirmation, setUninstallConfirmation] =
     useState<LoadedAppData["uninstallConfirmation"] | null>(null);
   const [uninstallStatus, setUninstallStatus] =
@@ -221,6 +222,7 @@ export function useAppController(bridge: AppBridge) {
             setUpdateCheckReady(true);
           }
 
+          setLauncherUpdateCheckReady(false);
           setLauncherUpdateStatus({
             kind: "skipped",
             title: "正在检查启动器更新",
@@ -248,6 +250,11 @@ export function useAppController(bridge: AppBridge) {
                   releaseUrl: null,
                   actions: []
                 });
+              }
+            })
+            .finally(() => {
+              if (alive) {
+                setLauncherUpdateCheckReady(true);
               }
             });
         }
@@ -655,6 +662,7 @@ export function useAppController(bridge: AppBridge) {
     launchInstalledCodex,
     launcherUpdateEvent,
     launcherUpdateMessage,
+    launcherUpdateCheckReady,
     launcherUpdateProgress: toPercent(launcherUpdateEvent?.progress),
     launcherUpdateState,
     launcherUpdateStatus,

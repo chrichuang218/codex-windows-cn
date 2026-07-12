@@ -20,7 +20,12 @@ import {
   X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { InstalledVersionStatus, UpdatePolicy, VersionInventory } from "../../bridge";
+import type {
+  InstalledVersionStatus,
+  LauncherUpdateStatus,
+  UpdatePolicy,
+  VersionInventory
+} from "../../bridge";
 import {
   launcherUpdateActionLabels,
   fetcherLabels,
@@ -128,6 +133,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
   const productName =
     updateStatus.productName ?? inventory?.productName ?? proxyStatus.productName ?? "Codex";
   const assistantName = "Codex Windows 中文助手";
+  const launcherUpdateAvailable = controller.launcherUpdateStatus.kind === "available";
   const defaultVersion = inventory ? inventory.defaultVersion : proxyStatus.currentVersion;
   const runningVersion = inventory?.runningVersions[0] ?? proxyStatus.runningVersions[0] ?? null;
   const runningIsOld = Boolean(
@@ -255,6 +261,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
           />
           <NavButton
             active={workspacePanel === "settings"}
+            alert={launcherUpdateAvailable}
             icon={<Settings2 size={18} />}
             label="设置"
             onClick={() => setWorkspacePanel("settings")}
@@ -595,7 +602,11 @@ function SettingsPanel({
   onSetDesktopShortcut: (enabled: boolean) => Promise<ShortcutActionFeedback>;
   saving: boolean;
 }) {
-  const { setWorkspacePanel } = controller;
+  const { launcherUpdateCheckReady, launcherUpdateStatus, setWorkspacePanel } = controller;
+  const launcherUpdateSummary = formatLauncherUpdateSummary(
+    launcherUpdateStatus,
+    launcherUpdateCheckReady
+  );
   const [keepAll, setKeepAll] = useState(inventory?.keepAllVersions ?? false);
   const [count, setCount] = useState(inventory?.keepVersions ?? 5);
   const [updatePolicy, setUpdatePolicy] = useState<UpdatePolicy>(
@@ -792,9 +803,13 @@ function SettingsPanel({
       />
 
       <section className="maintenance-strip">
-        <button onClick={() => setWorkspacePanel("launcherUpdate")} type="button">
+        <button
+          className={launcherUpdateStatus.kind === "available" ? "maintenance-update-available" : undefined}
+          onClick={() => setWorkspacePanel("launcherUpdate")}
+          type="button"
+        >
           <Rocket size={17} />
-          <span><strong>启动器更新</strong><small>检查中文助手新版本</small></span>
+          <span><strong>启动器更新</strong><small>{launcherUpdateSummary}</small></span>
         </button>
         <button className="maintenance-danger" onClick={() => setWorkspacePanel("uninstall")} type="button">
           <Trash2 size={17} />
@@ -1006,11 +1021,13 @@ function LauncherUpdatePanel({ controller }: { controller: ReadyAppController })
 
 function NavButton({
   active,
+  alert = false,
   icon,
   label,
   onClick
 }: {
   active: boolean;
+  alert?: boolean;
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
@@ -1019,8 +1036,25 @@ function NavButton({
     <button aria-current={active ? "page" : undefined} onClick={onClick} title={label} type="button">
       {icon}
       <span>{label}</span>
+      {alert ? <span aria-hidden="true" className="nav-alert-dot" title="有可用的启动器更新" /> : null}
     </button>
   );
+}
+
+function formatLauncherUpdateSummary(status: LauncherUpdateStatus, checkReady: boolean) {
+  if (!checkReady) {
+    return "正在后台检查更新";
+  }
+  if (status.kind === "available") {
+    return status.latestVersion ? `发现 v${status.latestVersion}，点击更新` : "发现新版本，点击更新";
+  }
+  if (status.kind === "upToDate") {
+    return status.currentVersion ? `已是最新版本 v${status.currentVersion}` : "已是最新版本";
+  }
+  if (status.kind === "error") {
+    return "检查失败，点击查看";
+  }
+  return status.message;
 }
 
 function Metric({
