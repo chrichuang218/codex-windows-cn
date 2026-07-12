@@ -235,10 +235,10 @@ fn hash_file(path: &Path) -> Result<String> {
         }
         h.update(&buf[..n]);
     }
-    Ok(hex(&h.finalize()))
+    Ok(hex_encode(&h.finalize()))
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
         s.push_str(&format!("{b:02x}"));

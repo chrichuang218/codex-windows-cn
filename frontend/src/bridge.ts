@@ -112,6 +112,13 @@ export type InstalledVersionStatus = {
 };
 
 export type CodexProtocolStatusKind = "missing" | "ready" | "needsRepair" | "otherOwner";
+export type CodexProtocolAction = "create" | "replace" | "remove";
+
+const codexProtocolActionMessages: Record<CodexProtocolAction, string> = {
+  create: "已创建或修复 codex:// 会话链接",
+  replace: "已将 codex:// 会话链接切换到当前安装",
+  remove: "已停止由当前安装处理 codex:// 会话链接"
+};
 
 export type CodexProtocolStatus = {
   kind: CodexProtocolStatusKind;
@@ -273,10 +280,7 @@ export type AppBridge = {
   saveVersionSettings: (request: VersionSettingsRequest) => Promise<VersionActionResult>;
   setDesktopShortcut: (enabled: boolean) => Promise<DesktopShortcutActionResult>;
   setAssistantDesktopShortcut: (enabled: boolean) => Promise<DesktopShortcutActionResult>;
-  setCodexProtocol: (
-    enabled: boolean,
-    replaceOther: boolean
-  ) => Promise<CodexProtocolActionResult>;
+  setCodexProtocol: (action: CodexProtocolAction) => Promise<CodexProtocolActionResult>;
   checkUpdateStatus: () => Promise<UpdateStatus>;
   startUpdate: () => Promise<UpdateStart>;
   getUpdateStatus: () => Promise<UpdateEvent | null>;
@@ -584,7 +588,8 @@ export const tauriBridge: AppBridge = {
     }
     return invoke<DesktopShortcutActionResult>("set_assistant_desktop_shortcut", { enabled });
   },
-  setCodexProtocol: (enabled, replaceOther) => {
+  setCodexProtocol: (action) => {
+    const enabled = action !== "remove";
     if (!("__TAURI_INTERNALS__" in window)) {
       fallbackCodexProtocol = {
         kind: enabled ? "ready" : "missing",
@@ -592,9 +597,7 @@ export const tauriBridge: AppBridge = {
       };
       return Promise.resolve({
         applied: true,
-        message: enabled
-          ? "已创建或修复 codex:// 会话链接"
-          : "已停止由当前安装处理 codex:// 会话链接",
+        message: codexProtocolActionMessages[action],
         inventory: {
           ...fallbackVersionInventory,
           codexProtocol: fallbackCodexProtocol,
@@ -603,10 +606,7 @@ export const tauriBridge: AppBridge = {
         }
       });
     }
-    return invoke<CodexProtocolActionResult>("set_codex_protocol", {
-      enabled,
-      replaceOther
-    });
+    return invoke<CodexProtocolActionResult>("set_codex_protocol", { action });
   },
   checkUpdateStatus: () => {
     if (!("__TAURI_INTERNALS__" in window)) {

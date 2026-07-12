@@ -13,7 +13,7 @@
 //! Shortcuts / registry / UAC elevation are intentionally NOT here — they
 //! live in their own modules alongside the rest of the Windows-integration goo.
 
-use crate::config::{Config, InstallMode, UpdatePolicy};
+use crate::config::{Config, InstallMode, UpdatePolicy, CONFIG_FILENAME};
 use crate::dialogs;
 use crate::extract;
 use crate::junction;
@@ -120,7 +120,7 @@ pub fn run_elevated(opts: InstallOptions) -> Result<String> {
 /// and `last_check_unix`, then prunes. Does NOT replace the launcher exe
 /// (we're running from it). Does NOT change install_mode / keep_versions / etc.
 pub fn update(root: std::path::PathBuf, on_msg: impl Fn(InstallMsg) + Send + 'static) {
-    match update_inner(&root, &on_msg, PostWorkMode::Background) {
+    match update_inner(&root, &on_msg, PostWorkMode::Background, None) {
         Ok(version) => on_msg(InstallMsg::Done { version }),
         Err(e) => on_msg(InstallMsg::Error(format!("{:#}", e))),
     }
@@ -128,8 +128,8 @@ pub fn update(root: std::path::PathBuf, on_msg: impl Fn(InstallMsg) + Send + 'st
 
 /// Run a System update inside the one-shot elevated helper. Post-update
 /// Windows integration must finish before the helper process exits.
-pub fn update_elevated(root: PathBuf) -> Result<String> {
-    update_inner(&root, &|_| {}, PostWorkMode::Inline)
+pub fn update_elevated(root: PathBuf, runtime_config: Config) -> Result<String> {
+    update_inner(&root, &|_| {}, PostWorkMode::Inline, Some(runtime_config))
 }
 
 #[derive(Clone, Copy)]
@@ -142,13 +142,13 @@ fn update_inner(
     root: &Path,
     on_msg: &dyn Fn(InstallMsg),
     post_work_mode: PostWorkMode,
+    supplied_runtime_config: Option<Config>,
 ) -> Result<String> {
-    // load_runtime, not load — the per-user state overlay (System installs)
-    // holds runtime-current values like update_policy, skipped_version,
-    // launcher_suppress_until_unix. save_install below clears the overlay,
-    // so we must merge it in first or those choices vanish post-update.
-    let mut cfg = Config::load_runtime(root)
-        .with_context(|| format!("loading existing config at {}", root.display()))?;
+    let cfg = match supplied_runtime_config.as_ref() {
+        Some(cfg) => cfg.clone(),
+        None => Config::load_runtime(root)
+            .with_context(|| format!("loading existing config at {}", root.display()))?,
+    };
 
     let downloads = root.join("downloads");
     std::fs::create_dir_all(&downloads)?;
@@ -197,28 +197,37 @@ fn update_inner(
     // Reload just before committing so settings changed while the large
     // download/extract was running are preserved instead of being overwritten
     // by the snapshot loaded at update start.
-    cfg = Config::load_runtime(root)
-        .with_context(|| format!("reloading runtime config at {}", root.display()))?;
-    cfg.current_version = result.version.clone();
-    cfg.known_latest = Some(result.version.clone());
-    cfg.suppress_until_unix = None;
-    cfg.last_check_unix = Some(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
-    );
-    // Update flow is elevated for System (UAC re-spawn) and runs in user
-    // context for User/Portable, so install-root write is always available
-    // here. save_install also clears any stale per-user state overlay so
-    // the freshly-written install-root config takes effect on next launch.
-    cfg.save_install(root)?;
+    let mut runtime_config = match supplied_runtime_config.as_ref() {
+        Some(cfg) => cfg.clone(),
+        None => Config::load_runtime(root)
+            .with_context(|| format!("reloading runtime config at {}", root.display()))?,
+    };
+    let completed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    apply_update_completion(&mut runtime_config, &result.version, completed_at);
+
+    let mut install_config = if supplied_runtime_config.is_some() {
+        Config::load(&root.join(CONFIG_FILENAME))
+            .with_context(|| format!("reloading install config at {}", root.display()))?
+    } else {
+        runtime_config.clone()
+    };
+    apply_update_completion(&mut install_config, &result.version, completed_at);
+    if supplied_runtime_config.is_some() {
+        install_config.save(&root.join(CONFIG_FILENAME))?;
+    } else {
+        install_config.save_install(root)?;
+    }
+
+    let protocol_preference = install_config.register_codex_protocol_preference();
 
     if let Err(error) = sync_launch_surface(
         root,
-        cfg.install_mode,
-        cfg.use_current_junction,
-        cfg.register_codex_protocol_preference(),
+        runtime_config.install_mode,
+        runtime_config.use_current_junction,
+        protocol_preference,
     ) {
         report_protocol_sync_error("更新", &error);
     }
@@ -230,11 +239,11 @@ fn update_inner(
     let post_update = PostUpdateWork {
         root: root.to_path_buf(),
         version: result.version.clone(),
-        mode: cfg.install_mode,
-        register_uninstall: cfg.register_uninstall,
-        keep_versions: cfg.keep_versions,
-        keep_all_versions: cfg.keep_all_versions,
-        use_current_junction: cfg.use_current_junction,
+        mode: runtime_config.install_mode,
+        register_uninstall: runtime_config.register_uninstall,
+        keep_versions: runtime_config.keep_versions,
+        keep_all_versions: runtime_config.keep_all_versions,
+        use_current_junction: runtime_config.use_current_junction,
         msix_path: result.msix_path.clone(),
     };
     match post_work_mode {
@@ -245,6 +254,13 @@ fn update_inner(
     }
 
     Ok(result.version)
+}
+
+fn apply_update_completion(cfg: &mut Config, version: &str, completed_at: u64) {
+    cfg.current_version = version.to_string();
+    cfg.known_latest = Some(version.to_string());
+    cfg.suppress_until_unix = None;
+    cfg.last_check_unix = Some(completed_at);
 }
 
 fn run_inner(
@@ -339,11 +355,12 @@ fn run_inner(
         skipped_launcher_version: None,
         launcher_suppress_until_unix: None,
     };
-    // Initial install runs elevated for System mode, so install-root
-    // write always succeeds. save_install also clears any stale state
-    // overlay from a previous install at this same root.
     check_cancel(cancel)?;
-    cfg.save_install(&opts.root)?;
+    if matches!(cfg.install_mode, InstallMode::System) {
+        cfg.save(&opts.root.join(CONFIG_FILENAME))?;
+    } else {
+        cfg.save_install(&opts.root)?;
+    }
 
     if let Err(error) = sync_launch_surface(
         &opts.root,
@@ -467,11 +484,24 @@ fn sync_launch_surface(
     sync_launch_surface_with(root, use_current_junction, |handler| {
         match preference {
             Some(true) => {
+                let registration = registry::register_codex_protocol(mode, root, handler)?;
                 if matches!(
-                    registry::register_codex_protocol(mode, root, handler)?,
+                    registration,
                     registry::ProtocolRegistration::PreservedForeign
                 ) {
-                    eprintln!("warn: codex:// is owned by another installation; preserving it");
+                    anyhow::bail!(
+                        "codex:// 当前由其他安装处理，已保留现有关联；可稍后在中文助手设置中显式切换"
+                    );
+                }
+                if !matches!(mode, InstallMode::System)
+                    && !matches!(
+                        registry::codex_protocol_status(mode, root, handler)?,
+                        registry::CodexProtocolStatus::Ready
+                    )
+                {
+                    anyhow::bail!(
+                        "codex:// 注册槽位已维护，但当前 Windows 默认关联仍由其他应用覆盖"
+                    );
                 }
             }
             Some(false) => {
@@ -517,8 +547,31 @@ pub fn enable_codex_protocol(
     }
 }
 
+pub fn enable_codex_protocol_with_backup(
+    root: &Path,
+    cfg: &Config,
+    replace_foreign: bool,
+) -> Result<(
+    registry::ProtocolRegistration,
+    registry::CodexProtocolBackup,
+)> {
+    let target = crate::versions::resolve_launch_target(root, cfg.use_current_junction, None)?;
+    if replace_foreign {
+        registry::replace_codex_protocol_with_backup(cfg.install_mode, root, &target.executable)
+    } else {
+        registry::register_codex_protocol_with_backup(cfg.install_mode, root, &target.executable)
+    }
+}
+
 pub fn disable_codex_protocol(root: &Path, cfg: &Config) -> Result<registry::ProtocolRemoval> {
     registry::remove_codex_protocol_if_owned(cfg.install_mode, root)
+}
+
+pub fn disable_codex_protocol_with_backup(
+    root: &Path,
+    cfg: &Config,
+) -> Result<(registry::ProtocolRemoval, registry::CodexProtocolBackup)> {
+    registry::remove_codex_protocol_if_owned_with_backup(cfg.install_mode, root)
 }
 
 fn report_protocol_sync_error(operation: &str, error: &anyhow::Error) {

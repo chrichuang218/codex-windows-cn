@@ -42,6 +42,8 @@
 | 中文桌面界面 | 提供概览、版本、设置三个紧凑视图，适配 `880×600` 默认窗口和 `720×520` 最小窗口。 |
 | 启动器自更新 | 从本仓库 GitHub Release 下载新版启动器，校验 SHA256 并通过自检后替换。 |
 
+“所有用户安装”不会用系统级注册强压当前用户已有的 `codex://` 默认关联；检测到 HKCU 或 Windows `UserChoice` 覆盖时，会在提权前明确提示先到 Windows 默认应用中处理。
+
 ## 快速开始
 
 1. 从 [最新 Release](https://github.com/chrichuang218/codex-windows-cn/releases/latest) 下载 `codex-launcher.exe` 和 `codex-launcher.exe.sha256`。

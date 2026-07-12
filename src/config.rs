@@ -15,6 +15,13 @@ pub const CONFIG_FILENAME: &str = "updater.json";
 /// the migration path in `mode::detect` can find and rename it.
 pub const LEGACY_CONFIG_FILENAME: &str = "config.json";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeStateBackup {
+    Unavailable,
+    Missing,
+    Present(Vec<u8>),
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallMode {
@@ -225,6 +232,58 @@ pub fn clear_state_file_if_ours(
     Ok(Some(state_path))
 }
 
+pub fn capture_runtime_state() -> std::io::Result<RuntimeStateBackup> {
+    let state_path = state_file_path();
+    capture_runtime_state_at(state_path.as_deref())
+}
+
+fn capture_runtime_state_at(state_path: Option<&Path>) -> std::io::Result<RuntimeStateBackup> {
+    let Some(state_path) = state_path else {
+        return Ok(RuntimeStateBackup::Unavailable);
+    };
+    match std::fs::read(state_path) {
+        Ok(raw) => Ok(RuntimeStateBackup::Present(raw)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(RuntimeStateBackup::Missing)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+pub fn restore_runtime_state(backup: &RuntimeStateBackup) -> std::io::Result<()> {
+    let state_path = state_file_path();
+    restore_runtime_state_at(state_path.as_deref(), backup)
+}
+
+fn restore_runtime_state_at(
+    state_path: Option<&Path>,
+    backup: &RuntimeStateBackup,
+) -> std::io::Result<()> {
+    let Some(state_path) = state_path else {
+        return match backup {
+            RuntimeStateBackup::Unavailable => Ok(()),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "LOCALAPPDATA not set; cannot restore runtime state",
+            )),
+        };
+    };
+    match backup {
+        RuntimeStateBackup::Unavailable => Ok(()),
+        RuntimeStateBackup::Missing => match std::fs::remove_file(state_path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        },
+        RuntimeStateBackup::Present(raw) => {
+            if let Some(parent) = state_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(state_path, raw)
+        }
+    }
+}
+
 /// Per-user fallback state file shape. `install_root` is embedded so we
 /// can ignore stale state from a different install at the same machine.
 ///
@@ -268,4 +327,68 @@ fn paths_equal(a: &Path, b: &Path) -> bool {
             .to_ascii_lowercase()
     };
     norm(a) == norm(b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{capture_runtime_state_at, restore_runtime_state_at, RuntimeStateBackup};
+    use std::{
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_state_path(test_name: &str) -> PathBuf {
+        let sequence = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir()
+            .join(format!(
+                "codex-windows-cn-{test_name}-{}-{sequence}",
+                std::process::id()
+            ))
+            .join("state.json")
+    }
+
+    #[test]
+    fn restore_runtime_state_removes_file_when_backup_was_missing() {
+        let state_path = temp_state_path("missing");
+        let backup = capture_runtime_state_at(Some(&state_path)).expect("capture missing state");
+        assert_eq!(backup, RuntimeStateBackup::Missing);
+
+        std::fs::create_dir_all(state_path.parent().expect("state parent"))
+            .expect("create state parent");
+        std::fs::write(&state_path, b"new state").expect("write new state");
+
+        restore_runtime_state_at(Some(&state_path), &backup).expect("restore missing state");
+        assert!(!state_path.exists());
+        std::fs::remove_dir_all(state_path.parent().expect("state parent"))
+            .expect("remove state parent");
+    }
+
+    #[test]
+    fn restore_runtime_state_preserves_original_bytes() {
+        let state_path = temp_state_path("present");
+        let original = b"\0original\r\nstate";
+        std::fs::create_dir_all(state_path.parent().expect("state parent"))
+            .expect("create state parent");
+        std::fs::write(&state_path, original).expect("write original state");
+        let backup = capture_runtime_state_at(Some(&state_path)).expect("capture present state");
+
+        std::fs::write(&state_path, b"replacement").expect("replace state");
+        restore_runtime_state_at(Some(&state_path), &backup).expect("restore present state");
+
+        assert_eq!(
+            std::fs::read(&state_path).expect("read restored state"),
+            original
+        );
+        std::fs::remove_dir_all(state_path.parent().expect("state parent"))
+            .expect("remove state parent");
+    }
+
+    #[test]
+    fn runtime_state_backup_stays_unavailable_without_state_path() {
+        let backup = capture_runtime_state_at(None).expect("capture unavailable state");
+        assert_eq!(backup, RuntimeStateBackup::Unavailable);
+        restore_runtime_state_at(None, &backup).expect("restore unavailable state");
+    }
 }

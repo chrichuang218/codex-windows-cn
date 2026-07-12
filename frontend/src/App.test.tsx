@@ -5,6 +5,7 @@ import { LoadingSplash } from "./components/Shell";
 import type {
   AppBridge,
   AppStatus,
+  CodexProtocolAction,
   InstallEvent,
   InstallerDefaults,
   LaunchInstalledRequest,
@@ -954,7 +955,7 @@ describe("Codex Windows 中文助手 shell", () => {
   });
 
   test("settings create repair and remove the CLI app conversation link", async () => {
-    const requests: Array<[boolean, boolean]> = [];
+    const requests: CodexProtocolAction[] = [];
     let inventory: VersionInventory = {
       ...versionInventory,
       codexProtocol: { kind: "missing" as const, desired: false }
@@ -962,8 +963,9 @@ describe("Codex Windows 中文助手 shell", () => {
     const bridge = makeBridge({
       installed: true,
       getVersionInventory: async () => inventory,
-      setCodexProtocol: async (enabled, replaceOther) => {
-        requests.push([enabled, replaceOther]);
+      setCodexProtocol: async (action) => {
+        requests.push(action);
+        const enabled = action !== "remove";
         inventory = {
           ...inventory,
           codexProtocol: {
@@ -993,15 +995,11 @@ describe("Codex Windows 中文助手 shell", () => {
     await waitFor(() => expect(requests).toHaveLength(2));
     fireEvent.click(screen.getByRole("button", { name: "移除CLI /app 会话链接" }));
     expect(await screen.findByText("已停止由当前安装处理 codex:// 会话链接")).toBeVisible();
-    expect(requests).toEqual([
-      [true, false],
-      [true, false],
-      [false, false]
-    ]);
+    expect(requests).toEqual(["create", "create", "remove"]);
   });
 
   test("settings require an explicit takeover when another install owns codex protocol", async () => {
-    const requests: Array<[boolean, boolean]> = [];
+    const requests: CodexProtocolAction[] = [];
     const inventory = {
       ...versionInventory,
       codexProtocol: { kind: "otherOwner" as const, desired: true }
@@ -1009,8 +1007,8 @@ describe("Codex Windows 中文助手 shell", () => {
     const bridge = makeBridge({
       installed: true,
       getVersionInventory: async () => inventory,
-      setCodexProtocol: async (enabled, replaceOther) => {
-        requests.push([enabled, replaceOther]);
+      setCodexProtocol: async (action) => {
+        requests.push(action);
         return {
           applied: true,
           message: "已将 codex:// 会话链接切换到当前安装",
@@ -1030,7 +1028,7 @@ describe("Codex Windows 中文助手 shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "设为当前安装处理 codex://" }));
 
     expect(await screen.findByText("已将 codex:// 会话链接切换到当前安装")).toBeVisible();
-    expect(requests).toEqual([[true, true]]);
+    expect(requests).toEqual(["replace"]);
   });
 
   test("installed mode keeps the loading progress visible while update checks are pending", async () => {
@@ -1575,14 +1573,17 @@ function makeBridge(
         : "已移除中文助手桌面快捷方式",
       inventory: { ...versionInventory, assistantDesktopShortcutExists: enabled }
     }),
-    setCodexProtocol: async (enabled) => ({
+    setCodexProtocol: async (action) => ({
       applied: true,
-      message: enabled
+      message: action !== "remove"
         ? "已创建或修复 codex:// 会话链接"
         : "已停止由当前安装处理 codex:// 会话链接",
       inventory: {
         ...versionInventory,
-        codexProtocol: { kind: enabled ? "ready" : "missing", desired: enabled }
+        codexProtocol: {
+          kind: action !== "remove" ? "ready" : "missing",
+          desired: action !== "remove"
+        }
       }
     }),
     checkUpdateStatus: async () => updateStatus,

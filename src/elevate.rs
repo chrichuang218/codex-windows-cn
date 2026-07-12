@@ -64,7 +64,31 @@ pub fn respawn_elevated(args: &str) -> Result<()> {
 /// Run the current executable elevated and wait for the one-shot helper to
 /// finish. The caller stays unelevated and can refresh its state afterward.
 pub fn respawn_elevated_wait(args: &str) -> Result<u32> {
-    let exe = std::env::current_exe().context("current_exe")?;
+    respawn_elevated_wait_with_state(args).map_err(|failure| failure.cause)
+}
+
+pub struct ElevatedWaitFailure {
+    pub launched: bool,
+    pub finished: bool,
+    pub cause: anyhow::Error,
+}
+
+pub fn respawn_elevated_wait_with_state(
+    args: &str,
+) -> std::result::Result<u32, ElevatedWaitFailure> {
+    let before_launch = |cause| ElevatedWaitFailure {
+        launched: false,
+        finished: false,
+        cause,
+    };
+    let after_launch = |finished, cause| ElevatedWaitFailure {
+        launched: true,
+        finished,
+        cause,
+    };
+    let exe = std::env::current_exe()
+        .context("current_exe")
+        .map_err(before_launch)?;
     let exe_w = wide(&exe.to_string_lossy());
     let verb = wide("runas");
     let args_w = wide(args);
@@ -80,21 +104,41 @@ pub fn respawn_elevated_wait(args: &str) -> Result<u32> {
     };
 
     unsafe {
-        ShellExecuteExW(&mut info).context("ShellExecuteExW runas")?;
+        ShellExecuteExW(&mut info)
+            .context("ShellExecuteExW runas")
+            .map_err(before_launch)?;
         if info.hProcess.is_invalid() {
-            anyhow::bail!("elevated helper did not return a process handle");
+            return Err(after_launch(
+                false,
+                anyhow::anyhow!("elevated helper did not return a process handle"),
+            ));
         }
 
         let wait = WaitForSingleObject(info.hProcess, INFINITE);
         if wait == WAIT_FAILED {
-            let _ = CloseHandle(info.hProcess);
-            anyhow::bail!("waiting for elevated helper failed");
+            loop {
+                let mut exit_code = 1u32;
+                if let Err(cause) = GetExitCodeProcess(info.hProcess, &mut exit_code) {
+                    let _ = CloseHandle(info.hProcess);
+                    return Err(after_launch(
+                        false,
+                        anyhow::anyhow!("GetExitCodeProcess after wait failure: {cause}"),
+                    ));
+                }
+                if exit_code != 259 {
+                    let _ = CloseHandle(info.hProcess);
+                    return Ok(exit_code);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
         }
 
         let mut exit_code = 1u32;
         let exit_result = GetExitCodeProcess(info.hProcess, &mut exit_code);
         let _ = CloseHandle(info.hProcess);
-        exit_result.context("GetExitCodeProcess")?;
+        exit_result
+            .context("GetExitCodeProcess")
+            .map_err(|cause| after_launch(true, cause))?;
         Ok(exit_code)
     }
 }

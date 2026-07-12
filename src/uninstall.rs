@@ -74,14 +74,60 @@ pub fn need_elevation(ctx: &UninstallContext) -> bool {
 #[allow(dead_code)]
 pub fn run() -> Result<()> {
     let ctx = load_context()?;
+    if matches!(ctx.cfg.install_mode, InstallMode::System) && elevate::is_elevated() {
+        anyhow::bail!("系统卸载必须从普通用户进程启动，才能清理发起用户的 codex:// 关联");
+    }
     if need_elevation(&ctx) {
-        elevate::respawn_elevated("--uninstall")?;
+        let root = ctx.root.clone();
+        let exit_code = elevate::respawn_elevated_wait("--uninstall-elevated")?;
+        if exit_code != 0 {
+            anyhow::bail!("elevated uninstall failed with exit code {exit_code}");
+        }
+        registry::remove_codex_protocol_if_owned(InstallMode::User, &root)
+            .context("removing current-user codex:// registration after system uninstall")?;
         return Ok(());
     }
 
-    // Headless mode: proxy progress through stderr, no UI callbacks.
-    run_worker(ctx, |msg| eprintln!("{:?}", msg));
-    Ok(())
+    run_worker_to_completion(ctx, |msg| eprintln!("{msg:?}"))
+        .map(|_| ())
+        .map_err(anyhow::Error::msg)
+}
+
+pub fn run_elevated() -> Result<()> {
+    if !elevate::is_elevated() {
+        anyhow::bail!("系统卸载 helper 需要管理员权限");
+    }
+    let ctx = load_context()?;
+    if !matches!(ctx.cfg.install_mode, InstallMode::System) {
+        anyhow::bail!("当前安装不是所有用户安装");
+    }
+    run_worker_to_completion(ctx, |msg| eprintln!("{msg:?}"))
+        .map(|_| ())
+        .map_err(anyhow::Error::msg)
+}
+
+pub fn run_worker_to_completion(
+    ctx: UninstallContext,
+    on_msg: impl Fn(UninstallMsg),
+) -> std::result::Result<String, String> {
+    let outcome = std::sync::Mutex::new(None);
+    run_worker(ctx, |msg| {
+        let terminal = match &msg {
+            UninstallMsg::Done { log_path } => Some(Ok(log_path.clone())),
+            UninstallMsg::Error(message) => Some(Err(message.clone())),
+            _ => None,
+        };
+        on_msg(msg);
+        if let Some(terminal) = terminal {
+            if let Ok(mut current) = outcome.lock() {
+                *current = Some(terminal);
+            }
+        }
+    });
+    outcome
+        .into_inner()
+        .map_err(|_| "读取卸载结果失败".to_string())?
+        .ok_or_else(|| "卸载进程未返回最终结果".to_string())?
 }
 
 /// Destructive worker. `on_msg` is the progress callback — posts `UninstallMsg`
@@ -168,7 +214,12 @@ pub fn run_worker(ctx: UninstallContext, on_msg: impl Fn(UninstallMsg)) {
         phase: "Removing registry entries".into(),
         detail: "".into(),
     });
-    let _ = registry::remove_codex_protocol_if_owned(ctx.cfg.install_mode, root);
+    if let Err(cause) = registry::remove_codex_protocol_if_owned(ctx.cfg.install_mode, root) {
+        on_msg(UninstallMsg::Error(format!(
+            "移除 codex:// 会话链接失败：{cause:#}\n\n已停止卸载，程序文件尚未删除。"
+        )));
+        return;
+    }
     let _ = registry::remove(ctx.cfg.install_mode);
 
     on_msg(UninstallMsg::Phase {

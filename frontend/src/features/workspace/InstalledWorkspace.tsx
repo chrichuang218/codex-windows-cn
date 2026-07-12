@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  CodexProtocolAction,
   InstalledVersionStatus,
   LauncherUpdateStatus,
   UpdatePolicy,
@@ -60,7 +61,7 @@ type PendingSwitch = {
 
 type BusyAction = "launch" | "delete" | "settings" | "shortcut" | "protocol" | null;
 
-type ShortcutActionFeedback = {
+type IntegrationActionFeedback = {
   error: boolean;
   message: string;
 };
@@ -206,7 +207,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
     }
   };
 
-  const setDesktopShortcut = async (enabled: boolean): Promise<ShortcutActionFeedback> => {
+  const setDesktopShortcut = async (enabled: boolean): Promise<IntegrationActionFeedback> => {
     setBusyAction("shortcut");
     setActionMessage(null);
     try {
@@ -225,7 +226,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
 
   const setAssistantDesktopShortcut = async (
     enabled: boolean
-  ): Promise<ShortcutActionFeedback> => {
+  ): Promise<IntegrationActionFeedback> => {
     setBusyAction("shortcut");
     setActionMessage(null);
     try {
@@ -243,13 +244,12 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
   };
 
   const setCodexProtocol = async (
-    enabled: boolean,
-    replaceOther: boolean
-  ): Promise<ShortcutActionFeedback> => {
+    action: CodexProtocolAction
+  ): Promise<IntegrationActionFeedback> => {
     setBusyAction("protocol");
     setActionMessage(null);
     try {
-      const result = await bridge.setCodexProtocol(enabled, replaceOther);
+      const result = await bridge.setCodexProtocol(action);
       commitInventory(result.inventory);
       return { error: false, message: result.message };
     } catch (cause) {
@@ -620,12 +620,9 @@ function SettingsPanel({
   controller: ReadyAppController;
   inventory: VersionInventory | null;
   onSave: (count: number, keepAll: boolean, updatePolicy: UpdatePolicy) => Promise<boolean>;
-  onSetCodexProtocol: (
-    enabled: boolean,
-    replaceOther: boolean
-  ) => Promise<ShortcutActionFeedback>;
-  onSetAssistantDesktopShortcut: (enabled: boolean) => Promise<ShortcutActionFeedback>;
-  onSetDesktopShortcut: (enabled: boolean) => Promise<ShortcutActionFeedback>;
+  onSetCodexProtocol: (action: CodexProtocolAction) => Promise<IntegrationActionFeedback>;
+  onSetAssistantDesktopShortcut: (enabled: boolean) => Promise<IntegrationActionFeedback>;
+  onSetDesktopShortcut: (enabled: boolean) => Promise<IntegrationActionFeedback>;
   saving: boolean;
 }) {
   const { launcherUpdateCheckReady, launcherUpdateStatus, setWorkspacePanel } = controller;
@@ -641,13 +638,11 @@ function SettingsPanel({
   const [dirty, setDirty] = useState(false);
   const [shortcutIntent, setShortcutIntent] = useState<boolean | null>(null);
   const [assistantShortcutIntent, setAssistantShortcutIntent] = useState<boolean | null>(null);
-  const [shortcutFeedback, setShortcutFeedback] = useState<ShortcutActionFeedback | null>(null);
+  const [shortcutFeedback, setShortcutFeedback] = useState<IntegrationActionFeedback | null>(null);
   const [assistantShortcutFeedback, setAssistantShortcutFeedback] =
-    useState<ShortcutActionFeedback | null>(null);
-  const [protocolIntent, setProtocolIntent] = useState<"enable" | "replace" | "disable" | null>(
-    null
-  );
-  const [protocolFeedback, setProtocolFeedback] = useState<ShortcutActionFeedback | null>(null);
+    useState<IntegrationActionFeedback | null>(null);
+  const [protocolIntent, setProtocolIntent] = useState<CodexProtocolAction | null>(null);
+  const [protocolFeedback, setProtocolFeedback] = useState<IntegrationActionFeedback | null>(null);
   const editRevision = useRef(0);
   const savedKeepAll = inventory?.keepAllVersions;
   const savedCount = inventory?.keepVersions;
@@ -701,11 +696,11 @@ function SettingsPanel({
     }
   };
 
-  const updateCodexProtocol = async (enabled: boolean, replaceOther = false) => {
-    setProtocolIntent(enabled ? (replaceOther ? "replace" : "enable") : "disable");
+  const updateCodexProtocol = async (action: CodexProtocolAction) => {
+    setProtocolIntent(action);
     setProtocolFeedback(null);
     try {
-      setProtocolFeedback(await onSetCodexProtocol(enabled, replaceOther));
+      setProtocolFeedback(await onSetCodexProtocol(action));
     } finally {
       setProtocolIntent(null);
     }
@@ -880,23 +875,13 @@ function ProtocolSetting({
   status
 }: {
   busy: boolean;
-  feedback: ShortcutActionFeedback | null;
-  intent: "enable" | "replace" | "disable" | null;
+  feedback: IntegrationActionFeedback | null;
+  intent: CodexProtocolAction | null;
   loaded: boolean;
-  onSet: (enabled: boolean, replaceOther?: boolean) => Promise<void>;
+  onSet: (action: CodexProtocolAction) => Promise<void>;
   status: VersionInventory["codexProtocol"] | null;
 }) {
-  const description = !status
-    ? "正在读取 codex:// 会话链接状态"
-    : status.kind === "ready"
-      ? "codex:// 已由当前安装处理，可从 CLI /app 直接打开会话"
-      : status.kind === "needsRepair"
-        ? "注册信息不完整或目标版本已变化"
-        : status.kind === "otherOwner"
-          ? "codex:// 当前由其他 Codex 安装处理"
-          : status.desired
-            ? "期望启用，但当前尚未注册"
-            : "让 CLI /app 直接打开当前 Desktop 会话";
+  const description = codexProtocolDescription(status);
 
   return (
     <section className="settings-section shortcut-setting">
@@ -918,7 +903,7 @@ function ProtocolSetting({
             aria-label="设为当前安装处理 codex://"
             className="button secondary"
             disabled={busy || !loaded}
-            onClick={() => void onSet(true, true)}
+            onClick={() => void onSet("replace")}
             type="button"
           >
             {intent === "replace" ? (
@@ -934,10 +919,10 @@ function ProtocolSetting({
               aria-label="修复CLI /app 会话链接"
               className="button secondary"
               disabled={busy}
-              onClick={() => void onSet(true)}
+              onClick={() => void onSet("create")}
               type="button"
             >
-              {intent === "enable" ? (
+              {intent === "create" ? (
                 <LoaderCircle className="spin" size={15} />
               ) : (
                 <Link2 size={15} />
@@ -948,10 +933,10 @@ function ProtocolSetting({
               aria-label="移除CLI /app 会话链接"
               className="button subtle"
               disabled={busy}
-              onClick={() => void onSet(false)}
+              onClick={() => void onSet("remove")}
               type="button"
             >
-              {intent === "disable" ? (
+              {intent === "remove" ? (
                 <LoaderCircle className="spin" size={15} />
               ) : (
                 <Trash2 size={15} />
@@ -964,10 +949,10 @@ function ProtocolSetting({
             aria-label="创建CLI /app 会话链接"
             className="button secondary"
             disabled={busy || !loaded}
-            onClick={() => void onSet(true)}
+            onClick={() => void onSet("create")}
             type="button"
           >
-            {intent === "enable" ? (
+            {intent === "create" ? (
               <LoaderCircle className="spin" size={15} />
             ) : (
               <Link2 size={15} />
@@ -978,6 +963,25 @@ function ProtocolSetting({
       </div>
     </section>
   );
+}
+
+function codexProtocolDescription(status: VersionInventory["codexProtocol"] | null): string {
+  if (!status) {
+    return "正在读取 codex:// 会话链接状态";
+  }
+
+  switch (status.kind) {
+    case "ready":
+      return "codex:// 已由当前安装处理，可从 CLI /app 直接打开会话";
+    case "needsRepair":
+      return "注册信息不完整或目标版本已变化";
+    case "otherOwner":
+      return "codex:// 当前由其他 Codex 安装处理";
+    case "missing":
+      return status.desired
+        ? "期望启用，但当前尚未注册"
+        : "让 CLI /app 直接打开当前 Desktop 会话";
+  }
 }
 
 function ShortcutSetting({
@@ -993,7 +997,7 @@ function ShortcutSetting({
   busy: boolean;
   description: string;
   exists: boolean;
-  feedback: ShortcutActionFeedback | null;
+  feedback: IntegrationActionFeedback | null;
   intent: boolean | null;
   loaded: boolean;
   onSet: (enabled: boolean) => Promise<void>;
