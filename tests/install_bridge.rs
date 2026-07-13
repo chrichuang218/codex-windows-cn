@@ -44,7 +44,6 @@ fn installer_defaults_offer_a_recommended_user_install_path() {
     assert!(user_mode.create_desktop_shortcut);
     assert!(!user_mode.create_assistant_desktop_shortcut);
     assert!(user_mode.register_uninstall);
-    assert!(user_mode.register_codex_protocol);
     assert_eq!(user_mode.keep_versions, 5);
     assert!(!user_mode.keep_all_versions);
     assert!(user_mode.use_current_junction);
@@ -59,7 +58,6 @@ fn installer_defaults_offer_a_recommended_user_install_path() {
     assert!(!portable_mode.create_desktop_shortcut);
     assert!(!portable_mode.create_assistant_desktop_shortcut);
     assert!(!portable_mode.register_uninstall);
-    assert!(!portable_mode.register_codex_protocol);
 }
 
 #[test]
@@ -71,7 +69,6 @@ fn install_request_builds_installer_options_without_touching_disk() {
         create_desktop_shortcut: true,
         create_assistant_desktop_shortcut: true,
         register_uninstall: true,
-        register_codex_protocol: true,
         keep_versions: 2,
         keep_all_versions: false,
         fetcher: BridgeFetcher::Direct,
@@ -90,7 +87,6 @@ fn install_request_builds_installer_options_without_touching_disk() {
     assert!(options.create_desktop_shortcut);
     assert!(options.create_assistant_desktop_shortcut);
     assert!(options.register_uninstall);
-    assert!(options.register_codex_protocol);
     assert_eq!(options.keep_versions, 2);
     assert_eq!(options.fetcher, Fetcher::Direct);
     assert!(options.use_current_junction);

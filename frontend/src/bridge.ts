@@ -27,7 +27,6 @@ export type InstallModeDefaults = {
   createDesktopShortcut: boolean;
   createAssistantDesktopShortcut: boolean;
   registerUninstall: boolean;
-  registerCodexProtocol: boolean;
   keepVersions: number;
   keepAllVersions: boolean;
   useCurrentJunction: boolean;
@@ -47,7 +46,6 @@ export type InstallRequest = {
   createDesktopShortcut: boolean;
   createAssistantDesktopShortcut: boolean;
   registerUninstall: boolean;
-  registerCodexProtocol: boolean;
   keepVersions: number;
   keepAllVersions: boolean;
   fetcher: Fetcher;
@@ -111,20 +109,6 @@ export type InstalledVersionStatus = {
   canDelete: boolean;
 };
 
-export type CodexProtocolStatusKind = "missing" | "ready" | "needsRepair" | "otherOwner";
-export type CodexProtocolAction = "create" | "replace" | "remove";
-
-const codexProtocolActionMessages: Record<CodexProtocolAction, string> = {
-  create: "已创建或修复 codex:// 会话链接",
-  replace: "已将 codex:// 会话链接切换到当前安装",
-  remove: "已停止由当前安装处理 codex:// 会话链接"
-};
-
-export type CodexProtocolStatus = {
-  kind: CodexProtocolStatusKind;
-  desired: boolean;
-};
-
 export type VersionInventory = {
   productName: string;
   root: string;
@@ -135,7 +119,6 @@ export type VersionInventory = {
   updatePolicy: UpdatePolicy;
   fetcher: Fetcher;
   useCurrentJunction: boolean;
-  codexProtocol: CodexProtocolStatus;
   desktopShortcutExists: boolean;
   assistantDesktopShortcutExists: boolean;
   versions: InstalledVersionStatus[];
@@ -154,12 +137,6 @@ export type VersionActionResult = {
 };
 
 export type DesktopShortcutActionResult = {
-  applied: boolean;
-  message: string;
-  inventory: VersionInventory;
-};
-
-export type CodexProtocolActionResult = {
   applied: boolean;
   message: string;
   inventory: VersionInventory;
@@ -280,7 +257,6 @@ export type AppBridge = {
   saveVersionSettings: (request: VersionSettingsRequest) => Promise<VersionActionResult>;
   setDesktopShortcut: (enabled: boolean) => Promise<DesktopShortcutActionResult>;
   setAssistantDesktopShortcut: (enabled: boolean) => Promise<DesktopShortcutActionResult>;
-  setCodexProtocol: (action: CodexProtocolAction) => Promise<CodexProtocolActionResult>;
   checkUpdateStatus: () => Promise<UpdateStatus>;
   startUpdate: () => Promise<UpdateStart>;
   getUpdateStatus: () => Promise<UpdateEvent | null>;
@@ -328,7 +304,6 @@ const fallbackInstallerDefaults: InstallerDefaults = {
       createDesktopShortcut: false,
       createAssistantDesktopShortcut: false,
       registerUninstall: false,
-      registerCodexProtocol: false,
       keepVersions: 5,
       keepAllVersions: false,
       useCurrentJunction: true
@@ -341,7 +316,6 @@ const fallbackInstallerDefaults: InstallerDefaults = {
       createDesktopShortcut: true,
       createAssistantDesktopShortcut: false,
       registerUninstall: true,
-      registerCodexProtocol: true,
       keepVersions: 5,
       keepAllVersions: false,
       useCurrentJunction: true
@@ -354,7 +328,6 @@ const fallbackInstallerDefaults: InstallerDefaults = {
       createDesktopShortcut: true,
       createAssistantDesktopShortcut: false,
       registerUninstall: true,
-      registerCodexProtocol: true,
       keepVersions: 5,
       keepAllVersions: false,
       useCurrentJunction: true
@@ -384,7 +357,6 @@ export const fallbackVersionInventory: VersionInventory = {
   updatePolicy: "daily",
   fetcher: "direct",
   useCurrentJunction: true,
-  codexProtocol: { kind: "missing", desired: false },
   desktopShortcutExists: false,
   assistantDesktopShortcutExists: false,
   versions: []
@@ -392,7 +364,6 @@ export const fallbackVersionInventory: VersionInventory = {
 
 let fallbackDesktopShortcutExists = false;
 let fallbackAssistantDesktopShortcutExists = false;
-let fallbackCodexProtocol: CodexProtocolStatus = { kind: "missing", desired: false };
 
 export const fallbackUpdateStatus: UpdateStatus = {
   kind: "skipped",
@@ -522,7 +493,6 @@ export const tauriBridge: AppBridge = {
     if (!("__TAURI_INTERNALS__" in window)) {
       return Promise.resolve({
         ...fallbackVersionInventory,
-        codexProtocol: fallbackCodexProtocol,
         desktopShortcutExists: fallbackDesktopShortcutExists,
         assistantDesktopShortcutExists: fallbackAssistantDesktopShortcutExists
       });
@@ -587,26 +557,6 @@ export const tauriBridge: AppBridge = {
       });
     }
     return invoke<DesktopShortcutActionResult>("set_assistant_desktop_shortcut", { enabled });
-  },
-  setCodexProtocol: (action) => {
-    const enabled = action !== "remove";
-    if (!("__TAURI_INTERNALS__" in window)) {
-      fallbackCodexProtocol = {
-        kind: enabled ? "ready" : "missing",
-        desired: enabled
-      };
-      return Promise.resolve({
-        applied: true,
-        message: codexProtocolActionMessages[action],
-        inventory: {
-          ...fallbackVersionInventory,
-          codexProtocol: fallbackCodexProtocol,
-          desktopShortcutExists: fallbackDesktopShortcutExists,
-          assistantDesktopShortcutExists: fallbackAssistantDesktopShortcutExists
-        }
-      });
-    }
-    return invoke<CodexProtocolActionResult>("set_codex_protocol", { action });
   },
   checkUpdateStatus: () => {
     if (!("__TAURI_INTERNALS__" in window)) {

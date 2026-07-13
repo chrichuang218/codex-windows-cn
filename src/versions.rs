@@ -259,17 +259,6 @@ pub fn delete_and_repair(
     version: &str,
     running_versions: &HashSet<String>,
 ) -> Result<DeleteRepair> {
-    let repair = delete_and_repair_in_memory(root, cfg, version, running_versions)?;
-    cfg.save_runtime(root)?;
-    Ok(repair)
-}
-
-pub fn delete_and_repair_in_memory(
-    root: &Path,
-    cfg: &mut Config,
-    version: &str,
-    running_versions: &HashSet<String>,
-) -> Result<DeleteRepair> {
     delete_installed(root, version, running_versions)?;
     let installed = scan_installed(root)?;
     let latest = installed
@@ -277,6 +266,7 @@ pub fn delete_and_repair_in_memory(
         .ok_or_else(|| anyhow::anyhow!("deletion left no launchable installed version"))?;
 
     cfg.current_version = latest.version.clone();
+    cfg.save_runtime(root)?;
     let current_repaired =
         !cfg.use_current_junction || crate::junction::set_current(root, &latest.version).is_ok();
 

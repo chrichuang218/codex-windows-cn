@@ -52,7 +52,6 @@ export function formFromMode(defaults: InstallerDefaults, mode: InstallForm["mod
     createDesktopShortcut: modeDefaults.createDesktopShortcut,
     createAssistantDesktopShortcut: modeDefaults.createAssistantDesktopShortcut,
     registerUninstall: modeDefaults.registerUninstall,
-    registerCodexProtocol: modeDefaults.registerCodexProtocol,
     keepVersions: modeDefaults.keepVersions,
     keepAllVersions: modeDefaults.keepAllVersions,
     fetcher: defaults.recommendedFetcher,

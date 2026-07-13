@@ -21,7 +21,6 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
-  CodexProtocolAction,
   InstalledVersionStatus,
   LauncherUpdateStatus,
   UpdatePolicy,
@@ -59,9 +58,9 @@ type PendingSwitch = {
   runningVersions: string[];
 };
 
-type BusyAction = "launch" | "delete" | "settings" | "shortcut" | "protocol" | null;
+type BusyAction = "launch" | "delete" | "settings" | "shortcut" | null;
 
-type IntegrationActionFeedback = {
+type ShortcutActionFeedback = {
   error: boolean;
   message: string;
 };
@@ -207,7 +206,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
     }
   };
 
-  const setDesktopShortcut = async (enabled: boolean): Promise<IntegrationActionFeedback> => {
+  const setDesktopShortcut = async (enabled: boolean): Promise<ShortcutActionFeedback> => {
     setBusyAction("shortcut");
     setActionMessage(null);
     try {
@@ -226,7 +225,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
 
   const setAssistantDesktopShortcut = async (
     enabled: boolean
-  ): Promise<IntegrationActionFeedback> => {
+  ): Promise<ShortcutActionFeedback> => {
     setBusyAction("shortcut");
     setActionMessage(null);
     try {
@@ -237,25 +236,6 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
       return {
         error: true,
         message: errorMessage(cause, "修改中文助手桌面快捷方式失败")
-      };
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const setCodexProtocol = async (
-    action: CodexProtocolAction
-  ): Promise<IntegrationActionFeedback> => {
-    setBusyAction("protocol");
-    setActionMessage(null);
-    try {
-      const result = await bridge.setCodexProtocol(action);
-      commitInventory(result.inventory);
-      return { error: false, message: result.message };
-    } catch (cause) {
-      return {
-        error: true,
-        message: errorMessage(cause, "修改 CLI /app 会话链接失败")
       };
     } finally {
       setBusyAction(null);
@@ -337,7 +317,6 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
               controller={controller}
               inventory={inventory}
               onSave={saveVersionSettings}
-              onSetCodexProtocol={setCodexProtocol}
               onSetAssistantDesktopShortcut={setAssistantDesktopShortcut}
               onSetDesktopShortcut={setDesktopShortcut}
               saving={busyAction === "settings"}
@@ -610,7 +589,6 @@ function SettingsPanel({
   controller,
   inventory,
   onSave,
-  onSetCodexProtocol,
   onSetAssistantDesktopShortcut,
   onSetDesktopShortcut,
   saving
@@ -620,9 +598,8 @@ function SettingsPanel({
   controller: ReadyAppController;
   inventory: VersionInventory | null;
   onSave: (count: number, keepAll: boolean, updatePolicy: UpdatePolicy) => Promise<boolean>;
-  onSetCodexProtocol: (action: CodexProtocolAction) => Promise<IntegrationActionFeedback>;
-  onSetAssistantDesktopShortcut: (enabled: boolean) => Promise<IntegrationActionFeedback>;
-  onSetDesktopShortcut: (enabled: boolean) => Promise<IntegrationActionFeedback>;
+  onSetAssistantDesktopShortcut: (enabled: boolean) => Promise<ShortcutActionFeedback>;
+  onSetDesktopShortcut: (enabled: boolean) => Promise<ShortcutActionFeedback>;
   saving: boolean;
 }) {
   const { launcherUpdateCheckReady, launcherUpdateStatus, setWorkspacePanel } = controller;
@@ -638,11 +615,9 @@ function SettingsPanel({
   const [dirty, setDirty] = useState(false);
   const [shortcutIntent, setShortcutIntent] = useState<boolean | null>(null);
   const [assistantShortcutIntent, setAssistantShortcutIntent] = useState<boolean | null>(null);
-  const [shortcutFeedback, setShortcutFeedback] = useState<IntegrationActionFeedback | null>(null);
+  const [shortcutFeedback, setShortcutFeedback] = useState<ShortcutActionFeedback | null>(null);
   const [assistantShortcutFeedback, setAssistantShortcutFeedback] =
-    useState<IntegrationActionFeedback | null>(null);
-  const [protocolIntent, setProtocolIntent] = useState<CodexProtocolAction | null>(null);
-  const [protocolFeedback, setProtocolFeedback] = useState<IntegrationActionFeedback | null>(null);
+    useState<ShortcutActionFeedback | null>(null);
   const editRevision = useRef(0);
   const savedKeepAll = inventory?.keepAllVersions;
   const savedCount = inventory?.keepVersions;
@@ -693,16 +668,6 @@ function SettingsPanel({
       setAssistantShortcutFeedback(await onSetAssistantDesktopShortcut(enabled));
     } finally {
       setAssistantShortcutIntent(null);
-    }
-  };
-
-  const updateCodexProtocol = async (action: CodexProtocolAction) => {
-    setProtocolIntent(action);
-    setProtocolFeedback(null);
-    try {
-      setProtocolFeedback(await onSetCodexProtocol(action));
-    } finally {
-      setProtocolIntent(null);
     }
   };
 
@@ -807,15 +772,6 @@ function SettingsPanel({
         </div>
       </section>
 
-      <ProtocolSetting
-        busy={busy}
-        feedback={protocolFeedback}
-        intent={protocolIntent}
-        loaded={!!inventory}
-        onSet={updateCodexProtocol}
-        status={inventory?.codexProtocol ?? null}
-      />
-
       <ShortcutSetting
         busy={busy}
         description={
@@ -866,124 +822,6 @@ function SettingsPanel({
   );
 }
 
-function ProtocolSetting({
-  busy,
-  feedback,
-  intent,
-  loaded,
-  onSet,
-  status
-}: {
-  busy: boolean;
-  feedback: IntegrationActionFeedback | null;
-  intent: CodexProtocolAction | null;
-  loaded: boolean;
-  onSet: (action: CodexProtocolAction) => Promise<void>;
-  status: VersionInventory["codexProtocol"] | null;
-}) {
-  const description = codexProtocolDescription(status);
-
-  return (
-    <section className="settings-section shortcut-setting">
-      <div className="settings-copy">
-        <strong>CLI /app 会话链接</strong>
-        <span>{description}</span>
-        {feedback ? (
-          <p
-            className={feedback.error ? "shortcut-feedback error" : "shortcut-feedback"}
-            role="status"
-          >
-            {feedback.message}
-          </p>
-        ) : null}
-      </div>
-      <div className="shortcut-actions">
-        {status?.kind === "otherOwner" ? (
-          <button
-            aria-label="设为当前安装处理 codex://"
-            className="button secondary"
-            disabled={busy || !loaded}
-            onClick={() => void onSet("replace")}
-            type="button"
-          >
-            {intent === "replace" ? (
-              <LoaderCircle className="spin" size={15} />
-            ) : (
-              <Link2 size={15} />
-            )}
-            设为当前安装
-          </button>
-        ) : status?.kind === "ready" || status?.kind === "needsRepair" ? (
-          <>
-            <button
-              aria-label="修复CLI /app 会话链接"
-              className="button secondary"
-              disabled={busy}
-              onClick={() => void onSet("create")}
-              type="button"
-            >
-              {intent === "create" ? (
-                <LoaderCircle className="spin" size={15} />
-              ) : (
-                <Link2 size={15} />
-              )}
-              修复
-            </button>
-            <button
-              aria-label="移除CLI /app 会话链接"
-              className="button subtle"
-              disabled={busy}
-              onClick={() => void onSet("remove")}
-              type="button"
-            >
-              {intent === "remove" ? (
-                <LoaderCircle className="spin" size={15} />
-              ) : (
-                <Trash2 size={15} />
-              )}
-              移除
-            </button>
-          </>
-        ) : (
-          <button
-            aria-label="创建CLI /app 会话链接"
-            className="button secondary"
-            disabled={busy || !loaded}
-            onClick={() => void onSet("create")}
-            type="button"
-          >
-            {intent === "create" ? (
-              <LoaderCircle className="spin" size={15} />
-            ) : (
-              <Link2 size={15} />
-            )}
-            创建
-          </button>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function codexProtocolDescription(status: VersionInventory["codexProtocol"] | null): string {
-  if (!status) {
-    return "正在读取 codex:// 会话链接状态";
-  }
-
-  switch (status.kind) {
-    case "ready":
-      return "codex:// 已由当前安装处理，可从 CLI /app 直接打开会话";
-    case "needsRepair":
-      return "注册信息不完整或目标版本已变化";
-    case "otherOwner":
-      return "codex:// 当前由其他 Codex 安装处理";
-    case "missing":
-      return status.desired
-        ? "期望启用，但当前尚未注册"
-        : "让 CLI /app 直接打开当前 Desktop 会话";
-  }
-}
-
 function ShortcutSetting({
   busy,
   description,
@@ -997,7 +835,7 @@ function ShortcutSetting({
   busy: boolean;
   description: string;
   exists: boolean;
-  feedback: IntegrationActionFeedback | null;
+  feedback: ShortcutActionFeedback | null;
   intent: boolean | null;
   loaded: boolean;
   onSet: (enabled: boolean) => Promise<void>;

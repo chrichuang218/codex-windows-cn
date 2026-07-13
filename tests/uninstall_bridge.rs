@@ -20,9 +20,6 @@ fn uninstall_confirmation_explains_deleted_and_preserved_data() {
         .delete_items
         .contains(&"开始菜单和桌面快捷方式".into()));
     assert!(confirmation
-        .delete_items
-        .contains(&"当前安装拥有的 codex:// 会话链接".into()));
-    assert!(confirmation
         .preserve_items
         .contains(&"Codex/ChatGPT 登录数据".into()));
     assert!(confirmation

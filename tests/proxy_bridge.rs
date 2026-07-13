@@ -173,7 +173,6 @@ fn test_config(use_current_junction: bool) -> Config {
         fetcher: Fetcher::Direct,
         use_current_junction,
         register_uninstall: true,
-        register_codex_protocol: Some(true),
         known_latest_launcher: None,
         skipped_launcher_version: None,
         launcher_suppress_until_unix: None,

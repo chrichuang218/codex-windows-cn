@@ -479,7 +479,6 @@ export function useAppController(bridge: AppBridge) {
         createDesktopShortcut: installForm.createDesktopShortcut,
         createAssistantDesktopShortcut: installForm.createAssistantDesktopShortcut,
         registerUninstall: installForm.registerUninstall,
-        registerCodexProtocol: installForm.registerCodexProtocol,
         keepVersions: installForm.keepVersions,
         keepAllVersions: installForm.keepAllVersions,
         fetcher: installForm.fetcher,

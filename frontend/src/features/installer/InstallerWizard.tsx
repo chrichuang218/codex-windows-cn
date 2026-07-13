@@ -129,16 +129,6 @@ export function InstallerWizard({ controller }: { controller: ReadyAppController
             </label>
             <label>
               <input
-                checked={installForm.registerCodexProtocol}
-                onChange={(event) =>
-                  patchInstallForm({ registerCodexProtocol: event.target.checked })
-                }
-                type="checkbox"
-              />
-              支持 CLI /app（注册 codex://）
-            </label>
-            <label>
-              <input
                 checked={installForm.useCurrentJunction}
                 onChange={(event) => patchInstallForm({ useCurrentJunction: event.target.checked })}
                 type="checkbox"
