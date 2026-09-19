@@ -202,12 +202,13 @@ pub fn launch_version(
 
     // Working dir = the versioned install dir so relative resource lookups
     // (Electron's default) resolve against the app root.
-    let working_dir = target.executable.parent().unwrap_or(root);
-    let mut child = std::process::Command::new(&target.executable)
-        .args(forward_args)
-        .current_dir(working_dir)
-        .spawn()
-        .with_context(|| format!("spawning {}", target.executable.display()))?;
+    let mut child = launch_command(
+        &target.executable,
+        forward_args,
+        std::env::var_os("CODEX_CLI_PATH"),
+    )
+    .spawn()
+    .with_context(|| format!("spawning {}", target.executable.display()))?;
     if !target_already_running {
         wait_for_running_version(
             &versions_root,
@@ -220,6 +221,32 @@ pub fn launch_version(
         version: target.version,
         app_kind: target.app_kind,
     })
+}
+
+fn launch_command(
+    executable: &Path,
+    args: &[String],
+    cli_override: Option<std::ffi::OsString>,
+) -> std::process::Command {
+    let mut command = std::process::Command::new(executable);
+    command.args(args);
+    if let Some(directory) = executable.parent() {
+        command.current_dir(directory);
+        let bundled_cli = directory.join("resources").join("codex.exe");
+        // Extracted MSIX apps have no package identity. An explicit CLI path
+        // selects the bundled runtime instead of the package-only core startup.
+        let cli = cli_override
+            .filter(|value| !value.to_string_lossy().trim().is_empty())
+            .or_else(|| {
+                bundled_cli
+                    .is_file()
+                    .then_some(bundled_cli.into_os_string())
+            });
+        if let Some(cli) = cli {
+            command.env("CODEX_CLI_PATH", cli);
+        }
+    }
+    command
 }
 
 /// Terminate every `Codex.exe` process whose image path is NOT under
@@ -524,6 +551,41 @@ pub fn terminate_pids(_pids: &[u32], _wait_ms: u32) {}
 #[cfg(test)]
 mod tests {
     use super::running_version_from_process_path;
+
+    #[test]
+    fn portable_launch_uses_its_own_cli_and_preserves_explicit_override() {
+        use std::ffi::{OsStr, OsString};
+
+        let root = std::env::temp_dir().join(format!("codex-portable-cli-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("resources")).unwrap();
+        let executable = root.join("ChatGPT.exe");
+        let bundled = root.join("resources").join("codex.exe");
+        let args = vec!["--user-data-dir=test profile".to_owned()];
+        let cli_env = |command: &std::process::Command| {
+            command
+                .get_envs()
+                .find(|(key, _)| *key == "CODEX_CLI_PATH")
+                .and_then(|(_, value)| value.map(OsStr::to_os_string))
+        };
+
+        let missing = super::launch_command(&executable, &args, None);
+        assert_eq!(cli_env(&missing), None);
+        std::fs::write(&bundled, b"cli fixture").unwrap();
+        for inherited in [None, Some(OsString::from("   "))] {
+            let command = super::launch_command(&executable, &args, inherited);
+            assert_eq!(cli_env(&command), Some(bundled.clone().into_os_string()));
+            assert_eq!(command.get_program(), executable.as_os_str());
+            assert_eq!(command.get_current_dir(), Some(root.as_path()));
+            assert_eq!(
+                command.get_args().collect::<Vec<_>>(),
+                vec![OsStr::new(&args[0])]
+            );
+        }
+        let explicit = OsString::from("C:/custom CLI/codex.exe");
+        let command = super::launch_command(&executable, &args, Some(explicit.clone()));
+        assert_eq!(cli_env(&command), Some(explicit));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn running_version_counts_only_root_entrypoints() {
