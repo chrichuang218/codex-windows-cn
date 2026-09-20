@@ -108,7 +108,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
 
   useEffect(() => {
     void refreshInventory();
-  }, [refreshInventory]);
+  }, [refreshInventory, workspacePanel]);
 
   useEffect(() => {
     const refreshVisibleInventory = () => {

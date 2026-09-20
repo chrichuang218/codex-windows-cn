@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AppBridge,
   InstallEvent,
@@ -110,6 +110,10 @@ function mergeProgressEvent<
   current: T | null,
   event: T
 ): T {
+  if (current?.kind === "done" || current?.kind === "error") {
+    return current;
+  }
+
   if (event.kind !== "progress" || event.detail.trim() !== "" || !current) {
     return event;
   }
@@ -138,7 +142,7 @@ export function useAppController(bridge: AppBridge) {
     useState<LoadedAppData["uninstallStatus"] | null>(null);
   const [installForm, setInstallForm] = useState<InstallForm | null>(null);
   const [installerStep, setInstallerStep] = useState<InstallerStep>("welcome");
-  const [workspacePanel, setWorkspacePanel] = useState<WorkspacePanel>("home");
+  const [workspacePanel, setPanel] = useState<WorkspacePanel>("home");
   const [forcedWorkspace, setForcedWorkspace] = useState(false);
   const [installState, setInstallState] = useState<
     "idle" | "starting" | "running" | "cancelling"
@@ -159,6 +163,59 @@ export function useAppController(bridge: AppBridge) {
   const [uninstallEvent, setUninstallEvent] = useState<UninstallEvent | null>(null);
   const [uninstallMessage, setUninstallMessage] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  const updateCheckGeneration = useRef(0);
+  const launcherCheckGeneration = useRef(0);
+
+  const refreshUpdateStatus = useCallback(async (proxy: LoadedAppData["proxyStatus"]) => {
+    const generation = ++updateCheckGeneration.current;
+    try {
+      const next = proxy.managedInstall ? await bridge.checkUpdateStatus() : fallbackUpdateStatus;
+      if (generation === updateCheckGeneration.current) {
+        setUpdateStatus(next);
+      }
+    } catch (cause) {
+      if (generation === updateCheckGeneration.current) {
+        setUpdateStatus({
+          kind: "error",
+          title: "检查更新失败",
+          message: errorMessage(cause, `无法读取 ${proxy.productName} 更新状态`),
+          currentVersion: proxy.currentVersion,
+          latestVersion: proxy.knownLatest,
+          productName: proxy.productName,
+          actions: []
+        });
+      }
+    } finally {
+      if (generation === updateCheckGeneration.current) {
+        setUpdateCheckReady(true);
+      }
+    }
+  }, [bridge]);
+
+  const refreshLauncherStatus = useCallback(async () => {
+    const generation = ++launcherCheckGeneration.current;
+    try {
+      const next = await bridge.checkLauncherUpdateStatus();
+      if (generation === launcherCheckGeneration.current) {
+        setLauncherUpdateStatus(next);
+      }
+    } catch (cause) {
+      if (generation === launcherCheckGeneration.current) {
+        setLauncherUpdateStatus((current) => ({
+          ...current,
+          kind: "error",
+          title: "检查启动器更新失败",
+          message: errorMessage(cause, "无法读取启动器更新状态"),
+          actions: []
+        }));
+      }
+    } finally {
+      if (generation === launcherCheckGeneration.current) {
+        setLauncherUpdateCheckReady(true);
+      }
+    }
+  }, [bridge]);
 
   useEffect(() => {
     let alive = true;
@@ -189,74 +246,11 @@ export function useAppController(bridge: AppBridge) {
           setUninstallStatus(nextUninstallStatus);
           setInstallForm(formFromMode(nextInstallerDefaults, nextInstallerDefaults.recommendedMode));
 
-          if (nextProxyStatus.managedInstall) {
-            setUpdateCheckReady(false);
-            setUpdateStatus(cachedUpdateStatusFromProxy(nextProxyStatus));
-            bridge
-              .checkUpdateStatus()
-              .then((nextUpdateStatus) => {
-                if (alive) {
-                  setUpdateStatus(nextUpdateStatus);
-                }
-              })
-              .catch((cause: unknown) => {
-                if (alive) {
-                  setUpdateStatus({
-                    kind: "error",
-                    title: "检查更新失败",
-                    message: errorMessage(cause, `无法读取 ${nextProxyStatus.productName} 更新状态`),
-                    currentVersion: nextProxyStatus.currentVersion,
-                    latestVersion: nextProxyStatus.knownLatest,
-                    productName: nextProxyStatus.productName,
-                    actions: []
-                  });
-                }
-              })
-              .finally(() => {
-                if (alive) {
-                  setUpdateCheckReady(true);
-                }
-              });
-          } else {
-            setUpdateStatus(fallbackUpdateStatus);
-            setUpdateCheckReady(true);
-          }
-
-          setLauncherUpdateCheckReady(false);
-          setLauncherUpdateStatus({
-            kind: "skipped",
-            title: "正在检查启动器更新",
-            message: "正在后台读取 GitHub Release 信息。",
-            currentVersion: null,
-            latestVersion: null,
-            releaseUrl: null,
-            actions: []
-          });
-          bridge
-            .checkLauncherUpdateStatus()
-            .then((nextLauncherUpdateStatus) => {
-              if (alive) {
-                setLauncherUpdateStatus(nextLauncherUpdateStatus);
-              }
-            })
-            .catch((cause: unknown) => {
-              if (alive) {
-                setLauncherUpdateStatus({
-                  kind: "error",
-                  title: "检查启动器更新失败",
-                  message: errorMessage(cause, "无法读取启动器更新状态"),
-                  currentVersion: null,
-                  latestVersion: null,
-                  releaseUrl: null,
-                  actions: []
-                });
-              }
-            })
-            .finally(() => {
-              if (alive) {
-                setLauncherUpdateCheckReady(true);
-              }
-            });
+          setUpdateStatus(nextProxyStatus.managedInstall
+            ? cachedUpdateStatusFromProxy(nextProxyStatus)
+            : fallbackUpdateStatus);
+          void refreshUpdateStatus(nextProxyStatus);
+          void refreshLauncherStatus();
         }
       )
       .catch((cause: unknown) => {
@@ -267,8 +261,43 @@ export function useAppController(bridge: AppBridge) {
 
     return () => {
       alive = false;
+      updateCheckGeneration.current += 1;
+      launcherCheckGeneration.current += 1;
     };
-  }, [bridge]);
+  }, [bridge, refreshUpdateStatus, refreshLauncherStatus]);
+
+  const refreshWorkspaceStatus = useCallback(() => {
+    if (!proxyStatus) {
+      return;
+    }
+    if (updateState === "idle") {
+      void refreshUpdateStatus(proxyStatus);
+    }
+    // The running binary keeps its old version until restart after the file swap.
+    if (launcherUpdateState === "idle" && launcherUpdateEvent?.kind !== "done") {
+      void refreshLauncherStatus();
+    }
+  }, [proxyStatus, updateState, launcherUpdateState, launcherUpdateEvent?.kind,
+    refreshUpdateStatus, refreshLauncherStatus]);
+
+  useEffect(() => {
+    const refreshVisibleStatus = () => {
+      if (document.visibilityState === "visible") {
+        refreshWorkspaceStatus();
+      }
+    };
+    window.addEventListener("focus", refreshVisibleStatus);
+    document.addEventListener("visibilitychange", refreshVisibleStatus);
+    return () => {
+      window.removeEventListener("focus", refreshVisibleStatus);
+      document.removeEventListener("visibilitychange", refreshVisibleStatus);
+    };
+  }, [refreshWorkspaceStatus]);
+
+  const setWorkspacePanel = (panel: WorkspacePanel) => {
+    setPanel(panel);
+    refreshWorkspaceStatus();
+  };
 
   useEffect(
     () =>
@@ -304,7 +333,9 @@ export function useAppController(bridge: AppBridge) {
     };
   }, [bridge, installerStep, installState]);
 
-  useEffect(() => bridge.onUpdateEvent(setUpdateEvent), [bridge]);
+  useEffect(() => bridge.onUpdateEvent((event) => {
+    setUpdateEvent((current) => mergeProgressEvent(current, event));
+  }), [bridge]);
   useEffect(
     () =>
       bridge.onLauncherUpdateEvent((event) => {
@@ -351,7 +382,7 @@ export function useAppController(bridge: AppBridge) {
         .getUpdateStatus()
         .then((event) => {
           if (alive && event) {
-            setUpdateEvent(event);
+            setUpdateEvent((current) => mergeProgressEvent(current, event));
           }
         })
         .catch(() => {});
@@ -410,6 +441,7 @@ export function useAppController(bridge: AppBridge) {
 
   useEffect(() => {
     if (updateEvent?.kind === "done") {
+      updateCheckGeneration.current += 1;
       setUpdateState("idle");
       const version = updateEvent.version;
       if (version) {
@@ -440,6 +472,17 @@ export function useAppController(bridge: AppBridge) {
   useEffect(() => {
     if (launcherUpdateEvent?.kind === "done" || launcherUpdateEvent?.kind === "error") {
       setLauncherUpdateState("idle");
+    }
+    if (launcherUpdateEvent?.kind === "done") {
+      launcherCheckGeneration.current += 1;
+      setLauncherUpdateCheckReady(true);
+      setLauncherUpdateStatus((current) => ({
+        ...current,
+        kind: "skipped",
+        title: launcherUpdateEvent.title,
+        message: launcherUpdateEvent.message ?? launcherUpdateEvent.detail,
+        actions: []
+      }));
     }
   }, [launcherUpdateEvent]);
 
@@ -552,6 +595,7 @@ export function useAppController(bridge: AppBridge) {
   };
 
   const startUpdate = async () => {
+    updateCheckGeneration.current += 1;
     const productName = updateStatus.productName ?? proxyStatus?.productName ?? "Codex";
     setUpdateState("running");
     setUpdateEvent({
@@ -582,12 +626,16 @@ export function useAppController(bridge: AppBridge) {
     try {
       const result = await bridge.applyUpdateAction(action, updateStatus?.latestVersion ?? "");
       setUpdateMessage(result.message);
+      if (proxyStatus) {
+        await refreshUpdateStatus(proxyStatus);
+      }
     } catch (cause) {
       setUpdateMessage(cause instanceof Error ? cause.message : "保存更新提醒失败");
     }
   };
 
   const startLauncherUpdate = async () => {
+    launcherCheckGeneration.current += 1;
     setLauncherUpdateState("running");
     setLauncherUpdateEvent({
       kind: "phase",
@@ -612,6 +660,7 @@ export function useAppController(bridge: AppBridge) {
         launcherUpdateStatus?.latestVersion ?? ""
       );
       setLauncherUpdateMessage(result.message);
+      await refreshLauncherStatus();
     } catch (cause) {
       setLauncherUpdateMessage(cause instanceof Error ? cause.message : "保存自更新提醒失败");
     }

@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { App } from "./App";
 import { LoadingSplash } from "./components/Shell";
 import type {
@@ -163,9 +163,60 @@ const launcherUpdateStatus = {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
 });
 
 describe("Codex Windows 中文助手 shell", () => {
+  test.each(["tab", "focus", "visibility"])("refreshes both update summaries on %s without restarting", async (trigger) => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    let refreshed = false;
+    render(<App bridge={makeBridge({
+      installed: true,
+      checkUpdateStatus: async () => refreshed
+        ? { ...updateStatus, kind: "upToDate", title: "ChatGPT 已是最新版本", message: "当前版本 1.2.0", currentVersion: "1.2.0", actions: [] }
+        : updateStatus,
+      checkLauncherUpdateStatus: async () => refreshed
+        ? { ...launcherUpdateStatus, kind: "upToDate", title: "启动器已是最新版本", currentVersion: "0.2.0", actions: [] }
+        : launcherUpdateStatus
+    })} />);
+    await screen.findByRole("button", { name: "立即更新" });
+    refreshed = true;
+    if (trigger === "tab") {
+      fireEvent.click(screen.getByRole("button", { name: "版本" }));
+      fireEvent.click(screen.getByRole("button", { name: "概览" }));
+    } else if (trigger === "focus") {
+      fireEvent.focus(window);
+    } else {
+      fireEvent(document, new Event("visibilitychange"));
+    }
+    await waitFor(() => expect(screen.queryByRole("button", { name: "立即更新" })).toBeNull());
+    expect(screen.getByText("当前版本 1.2.0")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    expect(await screen.findByRole("button", { name: /启动器更新/ })).not.toHaveTextContent("发现 v0.2.0");
+  });
+
+  test("a delayed update check cannot overwrite a completed update", async () => {
+    let checks = 0;
+    let resolveCheck!: (status: typeof updateStatus) => void;
+    let emitUpdate!: (event: UpdateEvent) => void;
+    render(<App bridge={makeBridge({
+      installed: true,
+      checkUpdateStatus: () => ++checks === 1
+        ? Promise.resolve(updateStatus)
+        : new Promise((resolve) => { resolveCheck = resolve; }),
+      onUpdateEvent: (handler) => { emitUpdate = handler; return () => {}; }
+    })} />);
+    await screen.findByRole("button", { name: "立即更新" });
+    fireEvent.focus(window);
+    expect(checks).toBe(2);
+    fireEvent.click(screen.getByRole("button", { name: "立即更新" }));
+    act(() => emitUpdate({ kind: "done", title: "更新完成", detail: "安装成功",
+      progress: 1, version: "1.2.0", message: null }));
+    await act(async () => { resolveCheck(updateStatus); });
+    expect(screen.queryByRole("button", { name: "立即更新" })).toBeNull();
+    expect(screen.getByText("当前版本 1.2.0")).toBeVisible();
+  });
+
   test("first launch presents a single-window Chinese assistant shell", async () => {
     render(<App bridge={makeBridge({ installed: false })} />);
 
@@ -1378,6 +1429,19 @@ describe("Codex Windows 中文助手 shell", () => {
 
     expect(await screen.findByText("自更新完成")).toBeVisible();
     expect(screen.getByText("启动器已更新，重启后生效")).toBeVisible();
+    act(() => {
+      emitLauncherUpdateEvent?.({
+        kind: "progress",
+        title: "正在下载启动器",
+        detail: "迟到的进度",
+        progress: 0.5,
+        message: null
+      });
+    });
+    expect(screen.getByText("自更新完成")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "返回设置" }));
+    expect(await screen.findByRole("button", { name: /启动器更新/ })).toHaveTextContent("重启后生效");
+    expect(screen.queryByTitle("有可用的启动器更新")).toBeNull();
   });
 
   test("polls launcher self-update progress when launcher events are not delivered", async () => {
