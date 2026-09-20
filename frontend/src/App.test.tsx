@@ -818,13 +818,17 @@ describe("Codex Windows 中文助手 shell", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "每次启动" }));
     expect(screen.getByRole("button", { name: "保存设置" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    });
     await waitFor(() => expect(screen.getByRole("button", { name: "已保存" })).toBeDisabled());
     expect(screen.queryByText("版本策略已保存")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "全部保留" }));
     expect(screen.getByRole("spinbutton", { name: "自动保留版本数量" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    });
     await waitFor(() => expect(requests).toHaveLength(2));
     expect(screen.queryByText("版本策略已保存")).toBeNull();
     expect(requests).toEqual([
