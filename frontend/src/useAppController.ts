@@ -142,7 +142,7 @@ export function useAppController(bridge: AppBridge) {
     useState<LoadedAppData["uninstallStatus"] | null>(null);
   const [installForm, setInstallForm] = useState<InstallForm | null>(null);
   const [installerStep, setInstallerStep] = useState<InstallerStep>("welcome");
-  const [workspacePanel, setPanel] = useState<WorkspacePanel>("home");
+  const [workspacePanel, setWorkspacePanel] = useState<WorkspacePanel>("home");
   const [forcedWorkspace, setForcedWorkspace] = useState(false);
   const [installState, setInstallState] = useState<
     "idle" | "starting" | "running" | "cancelling"
@@ -265,39 +265,6 @@ export function useAppController(bridge: AppBridge) {
       launcherCheckGeneration.current += 1;
     };
   }, [bridge, refreshUpdateStatus, refreshLauncherStatus]);
-
-  const refreshWorkspaceStatus = useCallback(() => {
-    if (!proxyStatus) {
-      return;
-    }
-    if (updateState === "idle") {
-      void refreshUpdateStatus(proxyStatus);
-    }
-    // The running binary keeps its old version until restart after the file swap.
-    if (launcherUpdateState === "idle" && launcherUpdateEvent?.kind !== "done") {
-      void refreshLauncherStatus();
-    }
-  }, [proxyStatus, updateState, launcherUpdateState, launcherUpdateEvent?.kind,
-    refreshUpdateStatus, refreshLauncherStatus]);
-
-  useEffect(() => {
-    const refreshVisibleStatus = () => {
-      if (document.visibilityState === "visible") {
-        refreshWorkspaceStatus();
-      }
-    };
-    window.addEventListener("focus", refreshVisibleStatus);
-    document.addEventListener("visibilitychange", refreshVisibleStatus);
-    return () => {
-      window.removeEventListener("focus", refreshVisibleStatus);
-      document.removeEventListener("visibilitychange", refreshVisibleStatus);
-    };
-  }, [refreshWorkspaceStatus]);
-
-  const setWorkspacePanel = (panel: WorkspacePanel) => {
-    setPanel(panel);
-    refreshWorkspaceStatus();
-  };
 
   useEffect(
     () =>

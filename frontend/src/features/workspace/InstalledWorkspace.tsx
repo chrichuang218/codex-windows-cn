@@ -81,6 +81,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
   const [pendingSwitch, setPendingSwitch] = useState<PendingSwitch | null>(null);
   const [pendingDelete, setPendingDelete] = useState<InstalledVersionStatus | null>(null);
   const inventoryGeneration = useRef(0);
+  const inventoryPending = useRef(false);
 
   const commitInventory = useCallback((next: VersionInventory) => {
     inventoryGeneration.current += 1;
@@ -89,6 +90,8 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
   }, []);
 
   const refreshInventory = useCallback(async () => {
+    if (inventoryPending.current) return;
+    inventoryPending.current = true;
     const generation = inventoryGeneration.current + 1;
     inventoryGeneration.current = generation;
     try {
@@ -103,12 +106,14 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
         return;
       }
       setInventoryError(errorMessage(cause, "无法读取本机版本"));
+    } finally {
+      inventoryPending.current = false;
     }
   }, [bridge]);
 
   useEffect(() => {
     void refreshInventory();
-  }, [refreshInventory, workspacePanel]);
+  }, [refreshInventory]);
 
   useEffect(() => {
     const refreshVisibleInventory = () => {

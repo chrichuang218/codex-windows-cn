@@ -250,7 +250,13 @@ fn launch_installed_codex(request: LaunchInstalledRequest) -> Result<ProxyLaunch
 }
 
 #[tauri::command]
-fn get_version_inventory() -> Result<VersionInventory, String> {
+async fn get_version_inventory() -> Result<VersionInventory, String> {
+    tauri::async_runtime::spawn_blocking(get_version_inventory_blocking)
+        .await
+        .map_err(|cause| format!("读取已安装版本任务失败：{cause}"))?
+}
+
+fn get_version_inventory_blocking() -> Result<VersionInventory, String> {
     let (root, cfg) = proxy_context()?;
     bridge::version_inventory(&root, &cfg).map_err(|cause| format!("读取已安装版本失败：{cause:#}"))
 }
@@ -406,7 +412,13 @@ fn delete_installed_version_inner(
 }
 
 #[tauri::command]
-fn check_update_status() -> Result<UpdateStatus, String> {
+async fn check_update_status() -> Result<UpdateStatus, String> {
+    tauri::async_runtime::spawn_blocking(check_update_status_blocking)
+        .await
+        .map_err(|cause| format!("检查应用更新任务失败：{cause}"))?
+}
+
+fn check_update_status_blocking() -> Result<UpdateStatus, String> {
     let _guard = lock_runtime_config()?;
     let (root, mut cfg) = proxy_context()?;
     let product_name = versions::scan_installed(&root)
@@ -504,7 +516,13 @@ fn update_status() -> Option<bridge::UpdateEvent> {
 }
 
 #[tauri::command]
-fn check_launcher_update_status() -> Result<LauncherUpdateStatus, String> {
+async fn check_launcher_update_status() -> Result<LauncherUpdateStatus, String> {
+    tauri::async_runtime::spawn_blocking(check_launcher_update_status_blocking)
+        .await
+        .map_err(|cause| format!("检查助手更新任务失败：{cause}"))?
+}
+
+fn check_launcher_update_status_blocking() -> Result<LauncherUpdateStatus, String> {
     let _guard = lock_runtime_config()?;
     let Ok((root, mut cfg)) = proxy_context() else {
         return Ok(bridge::launcher_update_status_from_decision(
@@ -1002,6 +1020,48 @@ fn main() {
 #[cfg(test)]
 mod cli_tests {
     use super::{parse_cli_helper, CliHelperAction};
+
+    #[test]
+    fn update_checks_yield_while_runtime_config_is_locked() {
+        use std::future::Future;
+        use std::sync::{mpsc, Arc};
+        use std::task::{Context, Poll, Wake, Waker};
+
+        struct NoopWake;
+        impl Wake for NoopWake {
+            fn wake(self: Arc<Self>) {}
+        }
+
+        // The test executable has no installation; completing the commands must not query the network.
+        assert!(super::proxy_context().is_err());
+        let checks: Vec<std::pin::Pin<Box<dyn Future<Output = ()>>>> = vec![
+            Box::pin(async {
+                let _ = super::check_update_status().await;
+            }),
+            Box::pin(async {
+                let _ = super::check_launcher_update_status().await;
+            }),
+        ];
+        for mut check in checks {
+            let (ready_tx, ready_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let holder = std::thread::spawn(move || {
+                let _guard = super::lock_runtime_config().unwrap();
+                ready_tx.send(()).unwrap();
+                let _ = release_rx.recv_timeout(std::time::Duration::from_secs(2));
+            });
+            ready_rx.recv().unwrap();
+            let waker = Waker::from(Arc::new(NoopWake));
+            let result = check.as_mut().poll(&mut Context::from_waker(&waker));
+            let _ = release_tx.send(());
+            holder.join().unwrap();
+            assert!(
+                matches!(result, Poll::Pending),
+                "refresh blocked the caller waiting for the config lock"
+            );
+            tauri::async_runtime::block_on(check);
+        }
+    }
 
     fn parse(args: &[&str]) -> Result<Option<CliHelperAction>, ()> {
         parse_cli_helper(args.iter().map(|arg| (*arg).to_string()))

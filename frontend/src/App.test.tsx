@@ -167,32 +167,25 @@ afterEach(() => {
 });
 
 describe("Codex Windows 中文助手 shell", () => {
-  test.each(["tab", "focus", "visibility"])("refreshes both update summaries on %s without restarting", async (trigger) => {
+  test("navigation and window activation do not recheck updates", async () => {
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-    let refreshed = false;
-    render(<App bridge={makeBridge({
-      installed: true,
-      checkUpdateStatus: async () => refreshed
-        ? { ...updateStatus, kind: "upToDate", title: "ChatGPT 已是最新版本", message: "当前版本 1.2.0", currentVersion: "1.2.0", actions: [] }
-        : updateStatus,
-      checkLauncherUpdateStatus: async () => refreshed
-        ? { ...launcherUpdateStatus, kind: "upToDate", title: "启动器已是最新版本", currentVersion: "0.2.0", actions: [] }
-        : launcherUpdateStatus
-    })} />);
-    await screen.findByRole("button", { name: "立即更新" });
-    refreshed = true;
-    if (trigger === "tab") {
-      fireEvent.click(screen.getByRole("button", { name: "版本" }));
-      fireEvent.click(screen.getByRole("button", { name: "概览" }));
-    } else if (trigger === "focus") {
-      fireEvent.focus(window);
-    } else {
-      fireEvent(document, new Event("visibilitychange"));
+    const checkUpdateStatus = vi.fn(async () => updateStatus);
+    const checkLauncherUpdateStatus = vi.fn(async () => launcherUpdateStatus);
+    const getVersionInventory = vi.fn(async () => versionInventory);
+    render(<App bridge={makeBridge({ installed: true, checkUpdateStatus, checkLauncherUpdateStatus, getVersionInventory })} />);
+    await screen.findByRole("heading", { name: "1.2.0" });
+    checkUpdateStatus.mockClear();
+    checkLauncherUpdateStatus.mockClear();
+    getVersionInventory.mockClear();
+    for (const name of ["版本", "设置", "概览"]) {
+      fireEvent.click(screen.getByRole("button", { name }));
+      expect(screen.getByRole("button", { name })).toHaveAttribute("aria-current", "page");
     }
-    await waitFor(() => expect(screen.queryByRole("button", { name: "立即更新" })).toBeNull());
-    expect(screen.getByText("当前版本 1.2.0")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "设置" }));
-    expect(await screen.findByRole("button", { name: /启动器更新/ })).not.toHaveTextContent("发现 v0.2.0");
+    expect(getVersionInventory).not.toHaveBeenCalled();
+    fireEvent.focus(window);
+    fireEvent(document, new Event("visibilitychange"));
+    expect(checkUpdateStatus).not.toHaveBeenCalled();
+    expect(checkLauncherUpdateStatus).not.toHaveBeenCalled();
   });
 
   test("a delayed update check cannot overwrite a completed update", async () => {
@@ -207,8 +200,8 @@ describe("Codex Windows 中文助手 shell", () => {
       onUpdateEvent: (handler) => { emitUpdate = handler; return () => {}; }
     })} />);
     await screen.findByRole("button", { name: "立即更新" });
-    fireEvent.focus(window);
-    expect(checks).toBe(2);
+    fireEvent.click(screen.getByRole("button", { name: "稍后提醒" }));
+    await waitFor(() => expect(checks).toBe(2));
     fireEvent.click(screen.getByRole("button", { name: "立即更新" }));
     act(() => emitUpdate({ kind: "done", title: "更新完成", detail: "安装成功",
       progress: 1, version: "1.2.0", message: null }));
@@ -788,14 +781,17 @@ describe("Codex Windows 中文助手 shell", () => {
       keepAllVersions: boolean;
       updatePolicy: "always" | "daily" | "weekly" | "never";
     }> = [];
+    let savedInventory = versionInventory;
     const bridge = makeBridge({
       installed: true,
+      getVersionInventory: async () => savedInventory,
       saveVersionSettings: async (request) => {
         requests.push(request);
+        savedInventory = { ...versionInventory, ...request };
         return {
           applied: true,
           message: "版本策略已保存",
-          inventory: { ...versionInventory, ...request }
+          inventory: savedInventory
         };
       }
     });
@@ -910,6 +906,7 @@ describe("Codex Windows 中文助手 shell", () => {
     });
 
     render(<App bridge={bridge} />);
+    await screen.findByRole("heading", { name: "1.2.0" });
     fireEvent.click(await screen.findByRole("button", { name: "设置" }));
     fireEvent.focus(window);
     await waitFor(() => expect(resolveStaleRefresh).not.toBeNull());
