@@ -77,7 +77,11 @@ pub fn extract_app(
         if rel.is_empty() {
             continue;
         }
-        let out_path = safe_join(&partial_dir, rel)?;
+        // MSIX ZIP names are URI-encoded; decode once before checking containment.
+        let decoded = percent_encoding::percent_decode_str(rel)
+            .decode_utf8()
+            .with_context(|| format!("invalid UTF-8 in MSIX entry: {rel}"))?;
+        let out_path = safe_join(&partial_dir, &decoded)?;
 
         if entry.is_dir() {
             fs::create_dir_all(&out_path)?;
@@ -86,7 +90,10 @@ pub fn extract_app(
         if let Some(parent) = out_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut out = fs::File::create(&out_path)
+        let mut out = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&out_path)
             .with_context(|| format!("creating {}", out_path.display()))?;
         io::copy(&mut entry, &mut out)?;
 
@@ -120,6 +127,9 @@ pub fn extract_app(
 /// Reject absolute paths, drive letters, and `..` traversal. ZIP entries
 /// are untrusted input and the Store MSIX is signed but we still validate.
 fn safe_join(base: &Path, rel: &str) -> Result<PathBuf> {
+    if rel.contains(['\0', ':']) {
+        bail!("zip entry has NUL or colon: {}", rel);
+    }
     let rel_path = Path::new(rel);
     if rel_path.is_absolute() {
         bail!("zip entry has absolute path: {}", rel);
@@ -128,7 +138,13 @@ fn safe_join(base: &Path, rel: &str) -> Result<PathBuf> {
     for comp in rel_path.components() {
         use std::path::Component::*;
         match comp {
-            Normal(c) => out.push(c),
+            Normal(c) => {
+                // Win32 strips trailing dots/spaces, which could turn a name into `..`.
+                if c.to_string_lossy().ends_with(['.', ' ']) {
+                    bail!("zip entry has a trailing dot or space: {}", rel);
+                }
+                out.push(c);
+            }
             CurDir => {}
             ParentDir => bail!("zip entry escapes base via '..': {}", rel),
             Prefix(_) | RootDir => bail!("zip entry has root/prefix component: {}", rel),
