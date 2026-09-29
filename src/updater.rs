@@ -222,13 +222,10 @@ pub enum LauncherDeferChoice {
     ApplyUpdate,
 }
 
-/// Reconstruct a pending launcher prompt from persisted state — no network.
-/// Used by paths that can't re-run the bg check (e.g. elevated `--auto-update`
-/// re-spawn — the unelevated process already bumped the shared cooldown).
-/// Returns `Some` only if `known_latest_launcher` is newer than the running
-/// version and the user hasn't silenced it (skip / snooze / never).
+/// Reuse a pending launcher prompt during cooldown. Due checks must reach
+/// GitHub even when the cache already contains a newer-than-installed version.
 pub fn pending_launcher_from_state(cfg: &Config) -> Option<LauncherDecision> {
-    if cfg.update_policy == UpdatePolicy::Never {
+    if launcher_auto_check_will_query(cfg) || cfg.update_policy == UpdatePolicy::Never {
         return None;
     }
     if let Some(until) = cfg.launcher_suppress_until_unix {
@@ -543,6 +540,44 @@ mod tests {
                 product_name,
             }) if current == "1.0.0" && latest == "2.0.0" && product_name == "ChatGPT"
         ));
+    }
+
+    #[test]
+    fn pending_launcher_cache_does_not_block_due_checks() {
+        let mut cfg = test_config();
+        cfg.known_latest_launcher = Some("999.0.0".into());
+
+        for policy in [
+            UpdatePolicy::Always,
+            UpdatePolicy::Daily,
+            UpdatePolicy::Weekly,
+        ] {
+            cfg.update_policy = policy;
+            cfg.last_launcher_check_unix = Some(0);
+            assert!(launcher_auto_check_will_query(&cfg));
+            assert!(pending_launcher_from_state(&cfg).is_none());
+        }
+
+        cfg.last_launcher_check_unix = Some(u64::MAX);
+        for policy in [UpdatePolicy::Daily, UpdatePolicy::Weekly] {
+            cfg.update_policy = policy;
+            assert!(matches!(
+                pending_launcher_from_state(&cfg),
+                Some(LauncherDecision::Available { latest, .. }) if latest == "999.0.0"
+            ));
+        }
+
+        cfg.update_policy = UpdatePolicy::Always;
+        assert!(pending_launcher_from_state(&cfg).is_none());
+
+        cfg.update_policy = UpdatePolicy::Never;
+        assert!(pending_launcher_from_state(&cfg).is_none());
+        cfg.update_policy = UpdatePolicy::Daily;
+        cfg.launcher_suppress_until_unix = Some(u64::MAX);
+        assert!(pending_launcher_from_state(&cfg).is_none());
+        cfg.launcher_suppress_until_unix = None;
+        cfg.skipped_launcher_version = cfg.known_latest_launcher.clone();
+        assert!(pending_launcher_from_state(&cfg).is_none());
     }
 
     #[test]
