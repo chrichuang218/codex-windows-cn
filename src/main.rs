@@ -412,13 +412,15 @@ fn delete_installed_version_inner(
 }
 
 #[tauri::command]
-async fn check_update_status() -> Result<UpdateStatus, String> {
-    tauri::async_runtime::spawn_blocking(check_update_status_blocking)
-        .await
-        .map_err(|cause| format!("检查应用更新任务失败：{cause}"))?
+async fn check_update_status(manual: Option<bool>) -> Result<UpdateStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        check_update_status_blocking(manual.unwrap_or(false))
+    })
+    .await
+    .map_err(|cause| format!("检查应用更新任务失败：{cause}"))?
 }
 
-fn check_update_status_blocking() -> Result<UpdateStatus, String> {
+fn check_update_status_blocking(manual: bool) -> Result<UpdateStatus, String> {
     let _guard = lock_runtime_config()?;
     let (root, mut cfg) = proxy_context()?;
     let product_name = versions::scan_installed(&root)
@@ -429,8 +431,10 @@ fn check_update_status_blocking() -> Result<UpdateStatus, String> {
                 .map(|item| item.app_kind.display_name().to_string())
         })
         .unwrap_or_else(|| "Codex".into());
-    let will_query = updater::auto_check_will_query(&cfg);
-    let decision = if will_query {
+    let will_query = manual || updater::auto_check_will_query(&cfg);
+    let decision = if manual {
+        updater::check_now(&cfg, codex_windows_cn::store::PRODUCT_ID_CODEX)
+    } else if will_query {
         updater::check_auto(&cfg, codex_windows_cn::store::PRODUCT_ID_CODEX)
     } else {
         updater::cached_update_decision(&cfg, &product_name)
@@ -516,13 +520,17 @@ fn update_status() -> Option<bridge::UpdateEvent> {
 }
 
 #[tauri::command]
-async fn check_launcher_update_status() -> Result<LauncherUpdateStatus, String> {
-    tauri::async_runtime::spawn_blocking(check_launcher_update_status_blocking)
-        .await
-        .map_err(|cause| format!("检查助手更新任务失败：{cause}"))?
+async fn check_launcher_update_status(
+    manual: Option<bool>,
+) -> Result<LauncherUpdateStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        check_launcher_update_status_blocking(manual.unwrap_or(false))
+    })
+    .await
+    .map_err(|cause| format!("检查助手更新任务失败：{cause}"))?
 }
 
-fn check_launcher_update_status_blocking() -> Result<LauncherUpdateStatus, String> {
+fn check_launcher_update_status_blocking(manual: bool) -> Result<LauncherUpdateStatus, String> {
     let _guard = lock_runtime_config()?;
     let Ok((root, mut cfg)) = proxy_context() else {
         return Ok(bridge::launcher_update_status_from_decision(
@@ -532,12 +540,18 @@ fn check_launcher_update_status_blocking() -> Result<LauncherUpdateStatus, Strin
         ));
     };
 
-    if let Some(decision) = updater::pending_launcher_from_state(&cfg) {
-        return Ok(bridge::launcher_update_status_from_decision(decision));
+    if !manual {
+        if let Some(decision) = updater::pending_launcher_from_state(&cfg) {
+            return Ok(bridge::launcher_update_status_from_decision(decision));
+        }
     }
 
-    let will_query = updater::launcher_auto_check_will_query(&cfg);
-    let decision = updater::check_launcher_auto(&cfg);
+    let will_query = manual || updater::launcher_auto_check_will_query(&cfg);
+    let decision = if manual {
+        updater::check_launcher_now()
+    } else {
+        updater::check_launcher_auto(&cfg)
+    };
     if will_query {
         updater::record_launcher_check(&mut cfg, &decision);
         cfg.save_runtime(&root)
@@ -1036,10 +1050,10 @@ mod cli_tests {
         assert!(super::proxy_context().is_err());
         let checks: Vec<std::pin::Pin<Box<dyn Future<Output = ()>>>> = vec![
             Box::pin(async {
-                let _ = super::check_update_status().await;
+                let _ = super::check_update_status(None).await;
             }),
             Box::pin(async {
-                let _ = super::check_launcher_update_status().await;
+                let _ = super::check_launcher_update_status(None).await;
             }),
         ];
         for mut check in checks {

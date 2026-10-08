@@ -309,7 +309,7 @@ fn run_inner(
     let cfg = Config {
         install_mode: opts.mode,
         current_version: result.version.clone(),
-        update_policy: UpdatePolicy::default(),
+        update_policy: UpdatePolicy::Always,
         last_check_unix: None,
         last_launcher_check_unix: None,
         suppress_until_unix: None,

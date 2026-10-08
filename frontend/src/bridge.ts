@@ -257,7 +257,7 @@ export type AppBridge = {
   saveVersionSettings: (request: VersionSettingsRequest) => Promise<VersionActionResult>;
   setDesktopShortcut: (enabled: boolean) => Promise<DesktopShortcutActionResult>;
   setAssistantDesktopShortcut: (enabled: boolean) => Promise<DesktopShortcutActionResult>;
-  checkUpdateStatus: () => Promise<UpdateStatus>;
+  checkUpdateStatus: (manual?: boolean) => Promise<UpdateStatus>;
   startUpdate: () => Promise<UpdateStart>;
   getUpdateStatus: () => Promise<UpdateEvent | null>;
   applyUpdateAction: (
@@ -270,7 +270,7 @@ export type AppBridge = {
   startUninstall: () => Promise<UninstallStart>;
   getUninstallProgress: () => Promise<UninstallEvent | null>;
   onUninstallEvent: (handler: (event: UninstallEvent) => void) => () => void;
-  checkLauncherUpdateStatus: () => Promise<LauncherUpdateStatus>;
+  checkLauncherUpdateStatus: (manual?: boolean) => Promise<LauncherUpdateStatus>;
   startLauncherUpdate: (latestVersion: string) => Promise<LauncherUpdateStart>;
   getLauncherUpdateProgress: () => Promise<LauncherUpdateEvent | null>;
   applyLauncherUpdateAction: (
@@ -354,7 +354,7 @@ export const fallbackVersionInventory: VersionInventory = {
   runningVersions: [],
   keepVersions: 5,
   keepAllVersions: false,
-  updatePolicy: "daily",
+  updatePolicy: "always",
   fetcher: "direct",
   useCurrentJunction: true,
   desktopShortcutExists: false,
@@ -558,12 +558,12 @@ export const tauriBridge: AppBridge = {
     }
     return invoke<DesktopShortcutActionResult>("set_assistant_desktop_shortcut", { enabled });
   },
-  checkUpdateStatus: () => {
+  checkUpdateStatus: (manual?: boolean) => {
     if (!("__TAURI_INTERNALS__" in window)) {
       return Promise.resolve(fallbackUpdateStatus);
     }
 
-    return invoke<UpdateStatus>("check_update_status");
+    return invoke<UpdateStatus>("check_update_status", { manual: manual ?? false });
   },
   startUpdate: () => {
     if (!("__TAURI_INTERNALS__" in window)) {
@@ -656,12 +656,12 @@ export const tauriBridge: AppBridge = {
       unlisten?.();
     };
   },
-  checkLauncherUpdateStatus: () => {
+  checkLauncherUpdateStatus: (manual?: boolean) => {
     if (!("__TAURI_INTERNALS__" in window)) {
       return Promise.resolve(fallbackLauncherUpdateStatus);
     }
 
-    return invoke<LauncherUpdateStatus>("check_launcher_update_status");
+    return invoke<LauncherUpdateStatus>("check_launcher_update_status", { manual: manual ?? false });
   },
   startLauncherUpdate: (latestVersion) => {
     if (!("__TAURI_INTERNALS__" in window)) {
