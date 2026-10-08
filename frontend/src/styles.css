@@ -1879,3 +1879,15 @@ a:focus-visible {
     gap: 9px;
   }
 }
+
+.update-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.update-band > div:first-child { flex: 1; min-width: 0; }
+.update-check-progress { width: 100%; max-width: 360px; height: 7px; border: 0; margin-top: 8px; }
+@media (max-width: 620px) { .update-band { flex-wrap: wrap; } }
+@media (prefers-reduced-motion: reduce) { .update-check-progress div { animation: none; } }

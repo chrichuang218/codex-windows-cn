@@ -473,21 +473,25 @@ function OverviewPanel({
       <div className="update-band">
         <div>
           <span className="section-label">官方更新</span>
-          <strong>{updateStatus.title}</strong>
+          <strong aria-live="polite">{controller.manualUpdateChecking ? "正在检查更新…" : updateStatus.title}</strong>
+          {controller.manualUpdateChecking ? <CheckProgress /> : null}
         </div>
         <div className="update-actions">
-          {updateStatus.actions.includes("updateNow") ? (
+          {!controller.manualUpdateChecking && updateStatus.actions.includes("updateNow") ? (
             <button className="button primary" onClick={startUpdate} type="button">
               <Download size={15} />
               立即更新
             </button>
-          ) : (
+          ) : !controller.manualUpdateChecking && updateStatus.kind === "upToDate" ? (
             <span className="verified-state"><CheckCircle2 size={16} /> 已同步</span>
-          )}
+          ) : null}
+          <button className="button secondary" disabled={controller.manualUpdateChecking || controller.updateState !== "idle"} onClick={() => void controller.checkUpdateNow()} type="button">
+            <RefreshCw size={15} />{controller.manualUpdateChecking ? "正在检查…" : "检查更新"}
+          </button>
         </div>
       </div>
 
-      {updateStatus.actions.length > 1 ? (
+      {!controller.manualUpdateChecking && updateStatus.actions.length > 1 ? (
         <div className="defer-row">
           {updateDeferActionOrder
             .filter((action) => updateStatus.actions.includes(action))
@@ -615,7 +619,7 @@ function SettingsPanel({
   const [keepAll, setKeepAll] = useState(inventory?.keepAllVersions ?? false);
   const [count, setCount] = useState(inventory?.keepVersions ?? 5);
   const [updatePolicy, setUpdatePolicy] = useState<UpdatePolicy>(
-    inventory?.updatePolicy ?? "daily"
+    inventory?.updatePolicy ?? "always"
   );
   const [dirty, setDirty] = useState(false);
   const [shortcutIntent, setShortcutIntent] = useState<boolean | null>(null);
@@ -736,11 +740,11 @@ function SettingsPanel({
 
         <div className="strategy-row">
           <div className="settings-copy">
-            <strong>自动检查更新</strong>
-            <span>控制 ChatGPT 与中文助手的后台检查频率</span>
+            <strong>启动时检查更新</strong>
+            <span>检查 ChatGPT 和中文助手是否有新版本</span>
           </div>
           <div
-            aria-label="自动检查更新频率"
+            aria-label="启动时检查更新频率"
             className="settings-policy-options"
             role="group"
           >
@@ -1000,13 +1004,16 @@ function LauncherUpdatePanel({ controller }: { controller: ReadyAppController })
     <section className="console-view maintenance-view">
       <button className="back-button" onClick={() => setWorkspacePanel("settings")} type="button"><ArrowLeft size={15} />返回设置</button>
       <span className="section-label">启动器自更新</span>
-      <h2>{launcherUpdateStatus.title}</h2>
-      <p>{launcherUpdateStatus.message}</p>
+      <h2 aria-live="polite">{controller.manualLauncherChecking ? "正在检查更新…" : launcherUpdateStatus.title}</h2>
+      {controller.manualLauncherChecking ? <CheckProgress /> : <p>{launcherUpdateStatus.message}</p>}
       <div className="maintenance-actions">
-        {launcherUpdateStatus.actions.includes("updateNow") ? (
+        <button className="button secondary" disabled={controller.manualLauncherChecking || !controller.launcherUpdateCheckReady} onClick={() => void controller.checkLauncherNow()} type="button">
+          <RefreshCw size={15} />{controller.manualLauncherChecking ? "正在检查…" : "检查更新"}
+        </button>
+        {!controller.manualLauncherChecking && launcherUpdateStatus.actions.includes("updateNow") ? (
           <button className="button primary" onClick={startLauncherUpdate} type="button"><Download size={15} />应用更新</button>
         ) : null}
-        {launcherUpdateStatus.actions
+        {!controller.manualLauncherChecking && launcherUpdateStatus.actions
           .filter((action) => action !== "updateNow" && action !== "viewRelease")
           .map((action) => (
             <button className="button secondary" key={action} onClick={() => applyLauncherUpdateAction(action)} type="button">
@@ -1022,6 +1029,10 @@ function LauncherUpdatePanel({ controller }: { controller: ReadyAppController })
       {launcherUpdateMessage ? <p className="inline-message">{launcherUpdateMessage}</p> : null}
     </section>
   );
+}
+
+function CheckProgress() {
+  return <div className="progress-track progress-indeterminate update-check-progress" role="progressbar" aria-label="正在检查更新"><div /></div>;
 }
 
 function NavButton({

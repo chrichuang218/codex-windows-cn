@@ -167,6 +167,55 @@ afterEach(() => {
 });
 
 describe("Codex Windows 中文助手 shell", () => {
+  test("manual app check bypasses policy, shows local progress and allows retry after failure", async () => {
+    let rejectCheck: (cause: Error) => void = () => {};
+    const checkUpdateStatus = vi.fn((manual?: boolean) => manual
+      ? new Promise<typeof updateStatus>((_resolve, reject) => { rejectCheck = reject; })
+      : Promise.resolve(updateStatus));
+    const startUpdate = vi.fn(async () => ({ accepted: true }));
+    render(<App bridge={makeBridge({ installed: true, checkUpdateStatus, startUpdate })} />);
+    const button = await screen.findByRole("button", { name: "检查更新" });
+    fireEvent.click(button);
+    expect(checkUpdateStatus).toHaveBeenLastCalledWith(true);
+    expect(screen.getByRole("progressbar", { name: "正在检查更新" })).toBeVisible();
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(checkUpdateStatus).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "启动 ChatGPT" })).toBeVisible();
+    await act(async () => { rejectCheck(new Error("网络不可用")); });
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.getByText("网络不可用")).toBeVisible();
+    expect(screen.queryByText("已同步")).toBeNull();
+    expect(button).toBeEnabled();
+    expect(startUpdate).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    expect(checkUpdateStatus).toHaveBeenCalledTimes(3);
+    await act(async () => { rejectCheck(new Error("网络不可用")); });
+  });
+
+  test("manual launcher check bypasses policy without starting self update", async () => {
+    let resolveCheck: (value: typeof launcherUpdateStatus) => void = () => {};
+    const checkLauncherUpdateStatus = vi.fn((manual?: boolean) => manual
+      ? new Promise<typeof launcherUpdateStatus>((resolve) => { resolveCheck = resolve; })
+      : Promise.resolve(launcherUpdateStatus));
+    const startLauncherUpdate = vi.fn(async () => ({ accepted: true }));
+    render(<App bridge={makeBridge({ installed: true, checkLauncherUpdateStatus, startLauncherUpdate })} />);
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+    expect(screen.getByText("启动时检查更新")).toBeVisible();
+    expect(screen.getByText("检查 ChatGPT 和中文助手是否有新版本")).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("button", { name: "每天" })).toHaveAttribute("aria-pressed", "true"));
+    fireEvent.click(screen.getByRole("button", { name: /启动器更新/ }));
+    const button = screen.getByRole("button", { name: "检查更新" });
+    fireEvent.click(button);
+    expect(checkLauncherUpdateStatus).toHaveBeenLastCalledWith(true);
+    expect(button).toBeDisabled();
+    expect(screen.getByRole("progressbar", { name: "正在检查更新" })).toBeVisible();
+    await act(async () => { resolveCheck(launcherUpdateStatus); });
+    expect(button).toBeEnabled();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(startLauncherUpdate).not.toHaveBeenCalled();
+  });
+
   test("navigation and window activation do not recheck updates", async () => {
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     const checkUpdateStatus = vi.fn(async () => updateStatus);
@@ -804,7 +853,7 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(screen.queryByText("安装位置")).toBeNull();
     expect(screen.queryByText("下载方式")).toBeNull();
     expect(screen.queryByText("稳定入口")).toBeNull();
-    expect(screen.getByRole("group", { name: "自动检查更新频率" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "启动时检查更新频率" })).toBeVisible();
     expect(screen.getByRole("button", { name: "每天" })).toHaveAttribute(
       "aria-pressed",
       "true"
@@ -841,8 +890,8 @@ describe("Codex Windows 中文助手 shell", () => {
     render(<App bridge={makeBridge({ installed: true })} />);
     fireEvent.click(await screen.findByRole("button", { name: "设置" }));
 
-    expect(screen.queryByRole("combobox", { name: "自动检查更新频率" })).toBeNull();
-    expect(screen.getByRole("group", { name: "自动检查更新频率" })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "启动时检查更新频率" })).toBeNull();
+    expect(screen.getByRole("group", { name: "启动时检查更新频率" })).toBeVisible();
   });
 
   test("settings keep an unsaved keep-all selection while inventory refreshes", async () => {
