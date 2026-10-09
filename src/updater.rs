@@ -42,6 +42,13 @@ pub enum UpdateDecision {
         latest: String,
         product_name: String,
     },
+    /// The Store temporarily returned a version below the previously observed one.
+    Unavailable {
+        current: String,
+        latest: String,
+        observed: String,
+        product_name: String,
+    },
     /// Check failed — surface the error but don't block the app.
     Error(String),
 }
@@ -122,21 +129,33 @@ pub fn cached_update_decision(cfg: &Config, product_name: &str) -> Option<Update
 /// explicitly clicks "Check for updates".
 pub fn check_now(cfg: &Config, product_id: &str) -> UpdateDecision {
     match store::resolve_latest_product(cfg.fetcher, product_id) {
-        Ok(product) => {
-            if version_gt(&product.version, &cfg.current_version) {
-                UpdateDecision::Available {
-                    current: cfg.current_version.clone(),
-                    latest: product.version,
-                    product_name: product.title,
-                }
-            } else {
-                UpdateDecision::UpToDate {
-                    version: product.version,
-                    product_name: product.title,
-                }
-            }
-        }
+        Ok(product) => decision_from_product(cfg, product),
         Err(e) => UpdateDecision::Error(format!("{:#}", e)),
+    }
+}
+
+fn decision_from_product(cfg: &Config, product: store::ResolvedProduct) -> UpdateDecision {
+    if let Some(latest) = &cfg.known_latest {
+        if version_gt(latest, &product.version) {
+            return UpdateDecision::Unavailable {
+                current: cfg.current_version.clone(),
+                latest: latest.clone(),
+                observed: product.version,
+                product_name: product.title,
+            };
+        }
+    }
+    if version_gt(&product.version, &cfg.current_version) {
+        UpdateDecision::Available {
+            current: cfg.current_version.clone(),
+            latest: product.version,
+            product_name: product.title,
+        }
+    } else {
+        UpdateDecision::UpToDate {
+            version: cfg.current_version.clone(),
+            product_name: product.title,
+        }
     }
 }
 
@@ -182,7 +201,9 @@ pub fn record_auto_check(cfg: &mut Config, decision: &UpdateDecision) {
     match decision {
         UpdateDecision::Available { latest, .. } => cfg.known_latest = Some(latest.clone()),
         UpdateDecision::UpToDate { version, .. } => cfg.known_latest = Some(version.clone()),
-        UpdateDecision::Skipped { .. } | UpdateDecision::Error(_) => {}
+        UpdateDecision::Skipped { .. }
+        | UpdateDecision::Error(_)
+        | UpdateDecision::Unavailable { .. } => {}
     }
 }
 
@@ -480,6 +501,35 @@ fn _fetcher_check(f: Fetcher) -> Fetcher {
 mod tests {
     use super::*;
     use crate::config::InstallMode;
+
+    #[test]
+    fn older_store_response_does_not_erase_known_update() {
+        let mut cfg = test_config();
+        cfg.current_version = "26.1002.7124.0".into();
+        let product = |version: &str| store::ResolvedProduct {
+            title: "ChatGPT".into(),
+            version: version.into(),
+        };
+        let available = decision_from_product(&cfg, product("26.1007.2314.0"));
+        record_auto_check(&mut cfg, &available);
+        for observed in ["26.1002.7124.0", "26.1005.1000.0"] {
+            let decision = decision_from_product(&cfg, product(observed));
+            let status = crate::bridge::update_status_from_decision(decision.clone());
+            assert_eq!(status.title, "暂未获取到此前发现的新版");
+            assert!(status.actions.is_empty());
+            assert_eq!(status.current_version.as_deref(), Some("26.1002.7124.0"));
+            assert!(status.message.contains(observed));
+            record_auto_check(&mut cfg, &decision);
+            assert_eq!(cfg.known_latest.as_deref(), Some("26.1007.2314.0"));
+        }
+        assert!(matches!(
+            decision_from_product(&cfg, product("26.1007.2314.0")),
+            UpdateDecision::Available { .. }
+        ));
+        let newer = decision_from_product(&cfg, product("26.1009.1000.0"));
+        record_auto_check(&mut cfg, &newer);
+        assert_eq!(cfg.known_latest.as_deref(), Some("26.1009.1000.0"));
+    }
 
     #[test]
     fn version_compare() {
