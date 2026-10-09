@@ -167,6 +167,66 @@ afterEach(() => {
 });
 
 describe("Codex Windows 中文助手 shell", () => {
+  test("an older check finishing cannot release a newer pending check", async () => {
+    let resolveOld!: (value: typeof updateStatus) => void;
+    let resolveNew!: (value: typeof updateStatus) => void;
+    const checkUpdateStatus = vi.fn()
+      .mockResolvedValueOnce(updateStatus)
+      .mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveNew = resolve; }))
+      .mockResolvedValue(updateStatus);
+    render(<App bridge={makeBridge({ installed: true, checkUpdateStatus })} />);
+    const remind = await screen.findByRole("button", { name: "稍后提醒" });
+    fireEvent.click(remind);
+    await waitFor(() => expect(checkUpdateStatus).toHaveBeenCalledTimes(2));
+    fireEvent.click(remind);
+    await waitFor(() => expect(checkUpdateStatus).toHaveBeenCalledTimes(3));
+    await act(async () => { resolveOld(updateStatus); });
+    fireEvent.click(screen.getByRole("button", { name: "检查更新" }));
+    expect(checkUpdateStatus).toHaveBeenCalledTimes(3);
+    await act(async () => { resolveNew(updateStatus); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "检查更新" })); });
+    expect(checkUpdateStatus).toHaveBeenCalledTimes(4);
+  });
+
+  test("an unavailable known update displays its reason without offering installation", async () => {
+    render(<App bridge={makeBridge({ installed: true, checkUpdateStatus: async () => ({
+      ...updateStatus, kind: "error", title: "暂未获取到此前发现的新版",
+      message: "此前发现版本 1.3.0，本次仅获取到 1.2.0，请稍后重新检查。", actions: []
+    }) })} />);
+    await screen.findByRole("button", { name: "检查更新" });
+    expect(screen.getByText("此前发现版本 1.3.0，本次仅获取到 1.2.0，请稍后重新检查。")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "立即更新" })).toBeNull();
+    expect(screen.queryByText("已同步")).toBeNull();
+  });
+
+  test("manual check after an overlapping update agrees with restart", async () => {
+    let resolveOldCheck!: (status: typeof updateStatus) => void;
+    let emitUpdate!: (event: UpdateEvent) => void;
+    const newer = { ...updateStatus, currentVersion: "1.2.0", latestVersion: "1.3.0", message: "可更新到 1.3.0" };
+    const checkUpdateStatus = vi.fn()
+      .mockResolvedValueOnce(updateStatus)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOldCheck = resolve; }))
+      .mockResolvedValue(newer);
+    const bridge = makeBridge({ installed: true, checkUpdateStatus,
+      onUpdateEvent: (handler) => { emitUpdate = handler; return () => {}; }
+    });
+    const app = render(<App bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("button", { name: "稍后提醒" }));
+    await waitFor(() => expect(checkUpdateStatus).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "立即更新" }));
+    act(() => emitUpdate({ kind: "done", title: "更新完成", detail: "安装成功", progress: 1, version: "1.2.0", message: null }));
+    await act(async () => { resolveOldCheck(updateStatus); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "检查更新" })); });
+    const manualRequests = checkUpdateStatus.mock.calls.length;
+    const manualShowsUpdate = screen.queryByRole("button", { name: "立即更新" }) !== null;
+    app.unmount();
+    render(<App bridge={bridge} />);
+    await screen.findByRole("button", { name: "立即更新" });
+    expect(manualRequests).toBe(3);
+    expect(manualShowsUpdate).toBe(true);
+  });
+
   test("manual app check bypasses policy, shows local progress and allows retry after failure", async () => {
     let rejectCheck: (cause: Error) => void = () => {};
     const checkUpdateStatus = vi.fn((manual?: boolean) => manual

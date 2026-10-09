@@ -166,16 +166,16 @@ export function useAppController(bridge: AppBridge) {
 
   const [manualUpdateChecking, setManualUpdateChecking] = useState(false);
   const [manualLauncherChecking, setManualLauncherChecking] = useState(false);
-  const updateCheckPending = useRef(false);
-  const launcherCheckPending = useRef(false);
+  const updateCheckPending = useRef<number | null>(null);
+  const launcherCheckPending = useRef<number | null>(null);
   const updateCheckGeneration = useRef(0);
   const launcherCheckGeneration = useRef(0);
 
   const refreshUpdateStatus = useCallback(async (proxy: LoadedAppData["proxyStatus"], manual = false) => {
-    if (manual && updateCheckPending.current) return;
-    updateCheckPending.current = true;
+    if (manual && updateCheckPending.current !== null) return;
     setManualUpdateChecking(manual);
     const generation = ++updateCheckGeneration.current;
+    updateCheckPending.current = generation;
     try {
       const next = proxy.managedInstall ? await bridge.checkUpdateStatus(manual) : fallbackUpdateStatus;
       if (generation === updateCheckGeneration.current) {
@@ -194,19 +194,22 @@ export function useAppController(bridge: AppBridge) {
         });
       }
     } finally {
-      if (generation === updateCheckGeneration.current) {
-        updateCheckPending.current = false;
+      // An invalidated result still owns its pending slot until the request finishes.
+      if (updateCheckPending.current === generation) {
+        updateCheckPending.current = null;
         setManualUpdateChecking(false);
+      }
+      if (generation === updateCheckGeneration.current) {
         setUpdateCheckReady(true);
       }
     }
   }, [bridge]);
 
   const refreshLauncherStatus = useCallback(async (manual = false) => {
-    if (manual && launcherCheckPending.current) return;
-    launcherCheckPending.current = true;
+    if (manual && launcherCheckPending.current !== null) return;
     setManualLauncherChecking(manual);
     const generation = ++launcherCheckGeneration.current;
+    launcherCheckPending.current = generation;
     try {
       const next = await bridge.checkLauncherUpdateStatus(manual);
       if (generation === launcherCheckGeneration.current) {
@@ -223,9 +226,11 @@ export function useAppController(bridge: AppBridge) {
         }));
       }
     } finally {
-      if (generation === launcherCheckGeneration.current) {
-        launcherCheckPending.current = false;
+      if (launcherCheckPending.current === generation) {
+        launcherCheckPending.current = null;
         setManualLauncherChecking(false);
+      }
+      if (generation === launcherCheckGeneration.current) {
         setLauncherUpdateCheckReady(true);
       }
     }

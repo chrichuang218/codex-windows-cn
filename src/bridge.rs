@@ -401,6 +401,20 @@ pub fn app_status() -> AppStatus {
 
 pub fn update_status_from_decision(decision: UpdateDecision) -> UpdateStatus {
     match decision {
+        UpdateDecision::Unavailable {
+            current,
+            latest,
+            observed,
+            product_name,
+        } => UpdateStatus {
+            kind: UpdateStatusKind::Error,
+            title: "暂未获取到此前发现的新版".into(),
+            message: format!("此前发现版本 {latest}，本次仅获取到 {observed}，请稍后重新检查。"),
+            current_version: Some(current),
+            latest_version: Some(latest),
+            product_name: Some(product_name),
+            actions: Vec::new(),
+        },
         UpdateDecision::Available {
             current,
             latest,
