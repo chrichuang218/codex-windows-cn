@@ -35,8 +35,9 @@ fn main() -> Result<()> {
     let mut zip = zip::ZipArchive::new(std::fs::File::open(&archive)?)?;
     for i in 0..zip.len() {
         let entry = zip.by_index(i)?;
-        if entry.name().contains("oai/sky/package.json") {
-            println!("archive entry: {}", entry.name());
+        let name = entry.name()?;
+        if name.contains("oai/sky/package.json") {
+            println!("archive entry: {name}");
         }
     }
     anyhow::ensure!(
