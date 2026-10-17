@@ -360,7 +360,8 @@ describe("Codex Windows 中文助手 shell", () => {
     render(<LoadingSplash />);
 
     expect(screen.getByRole("heading", { name: "Codex Windows 中文助手" })).toBeVisible();
-    expect(screen.getByText("安装向导")).toBeVisible();
+    expect(screen.getByText("中文安装更新助手")).toBeVisible();
+    expect(screen.queryByText("安装向导")).toBeNull();
     expect(screen.getByLabelText("当前页面")).toHaveTextContent("正在加载");
     expect(screen.getByRole("img", { name: "ChatGPT 标志" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "正在启动 Codex Windows 中文助手" })).toBeVisible();
@@ -727,23 +728,85 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(screen.queryByRole("button", { name: /卸载助手/ })).toBeNull();
     expect(screen.getByRole("button", { name: "立即更新" })).toBeVisible();
     expect(screen.getByRole("button", { name: "稍后提醒" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "跳过此版本" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "1 天后提醒" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "7 天后提醒" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "关闭提醒" })).toBeVisible();
+    expect(screen.queryByRole("menuitem", { name: "跳过此版本" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "其他提醒方式" }));
+    expect(screen.getByRole("menuitem", { name: "跳过此版本" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "1 天后提醒" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "7 天后提醒" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "关闭提醒" })).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByText("有可用更新")).toBeVisible();
     const installSummary = screen.getByLabelText("安装摘要");
     await waitFor(() => {
       expect(installSummary).toHaveTextContent(
         "安装位置C:\\Users\\tester\\AppData\\Local\\Codex"
       );
-      expect(installSummary).toHaveTextContent("下载方式直连 Microsoft Store");
-      expect(installSummary).toHaveTextContent("稳定入口versions\\current");
     });
+    expect(installSummary).not.toHaveTextContent("下载方式");
+    expect(installSummary).not.toHaveTextContent("稳定入口");
 
     fireEvent.click(screen.getByRole("button", { name: "启动 ChatGPT" }));
 
     expect(await screen.findByText("已启动 ChatGPT 1.2.0")).toBeVisible();
     expect(launchRequests).toEqual([{ version: null, switchRunning: false }]);
+  });
+
+  test("version page lists versions without install internals", async () => {
+    render(<App bridge={makeBridge({ installed: true })} />);
+    fireEvent.click(await screen.findByRole("button", { name: "版本" }));
+
+    expect(await screen.findByRole("button", { name: "启动 Codex 1.0.0" })).toBeVisible();
+    expect(screen.queryByText("下载方式")).toBeNull();
+    expect(screen.queryByText("稳定入口")).toBeNull();
+  });
+
+  test("delete confirmation ignores repeated clicks while deletion is running", async () => {
+    let finishDelete!: () => void;
+    const deleteInstalledVersion = vi.fn(
+      (version: string) =>
+        new Promise<Awaited<ReturnType<AppBridge["deleteInstalledVersion"]>>>((resolve) => {
+          finishDelete = () =>
+            resolve({ applied: true, message: `已删除版本 ${version}`, inventory: versionInventory });
+        })
+    );
+    render(<App bridge={makeBridge({ installed: true, deleteInstalledVersion })} />);
+    fireEvent.click(await screen.findByRole("button", { name: "版本" }));
+    fireEvent.click(await screen.findByRole("button", { name: "删除 ChatGPT 1.2.0" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除版本" }));
+
+    const pending = await screen.findByRole("button", { name: "正在删除" });
+    expect(pending).toBeDisabled();
+    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
+    fireEvent.click(pending);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(deleteInstalledVersion).toHaveBeenCalledTimes(1);
+
+    await act(async () => finishDelete());
+    expect(await screen.findByText("已删除版本 1.2.0")).toBeVisible();
+  });
+
+  test("confirmation dialog focuses cancel and closes with Escape", async () => {
+    render(<App bridge={makeBridge({ installed: true })} />);
+    fireEvent.click(await screen.findByRole("button", { name: "版本" }));
+    fireEvent.click(await screen.findByRole("button", { name: "删除 ChatGPT 1.2.0" }));
+
+    const dialog = screen.getByRole("dialog", { name: "确认删除" });
+    expect(dialog).toHaveAccessibleDescription(/登录和项目数据会保留/);
+    expect(screen.getByRole("button", { name: "取消" })).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  test("action feedback does not leak into another panel", async () => {
+    render(<App bridge={makeBridge({ installed: true })} />);
+    fireEvent.click(await screen.findByRole("button", { name: "版本" }));
+    fireEvent.click(await screen.findByRole("button", { name: "启动 Codex 1.0.0" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/已启动/);
+
+    fireEvent.click(screen.getByRole("button", { name: "概览" }));
+    expect(screen.queryByText(/已启动 ChatGPT/)).toBeNull();
   });
 
   test("version inventory launches a retained historical version without changing the default target", async () => {
@@ -1160,7 +1223,7 @@ describe("Codex Windows 中文助手 shell", () => {
       />
     );
 
-    expect((await screen.findAllByText("ChatGPT 已是最新版本")).length).toBe(2);
+    expect((await screen.findAllByText("ChatGPT 已是最新版本")).length).toBe(1);
     expect(screen.getByText("已同步")).toBeVisible();
     expect(screen.queryByRole("button", { name: "立即更新" })).toBeNull();
     expect(screen.getByRole("button", { name: "启动 ChatGPT" })).toBeVisible();
@@ -1289,6 +1352,8 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(screen.getByText("正在使用已配置的下载方式获取 ChatGPT 更新包。")).toBeVisible();
     expect(screen.queryByText("发现 ChatGPT 新版本")).toBeNull();
     expect(screen.queryByRole("button", { name: "稍后提醒" })).toBeNull();
+    expect(screen.getByLabelText("安装摘要")).toBeVisible();
+    expect(screen.getByRole("button", { name: "启动 ChatGPT" })).toBeDisabled();
 
     act(() => {
       emitUpdateEvent?.({
@@ -1552,6 +1617,50 @@ describe("Codex Windows 中文助手 shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "返回设置" }));
     expect(await screen.findByRole("button", { name: /启动器更新/ })).toHaveTextContent("重启后生效");
     expect(screen.queryByTitle("有可用的启动器更新")).toBeNull();
+  });
+
+  test("launcher update page shows a status card with a version comparison", async () => {
+    render(<App bridge={makeBridge({ installed: true })} />);
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+    fireEvent.click(await screen.findByRole("button", { name: /启动器更新/ }));
+
+    const card = await screen.findByLabelText("启动器版本状态");
+    expect(card).toHaveTextContent("发现启动器新版本");
+    expect(card).toHaveTextContent("当前 v0.1.2 → 最新 v0.2.0");
+    expect(card).toContainElement(screen.getByRole("button", { name: "应用更新" }));
+    expect(screen.queryByText("启动器自更新")).toBeNull();
+    expect(screen.getByRole("button", { name: "稍后提醒" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "其他提醒方式" }));
+    expect(screen.getByRole("menuitem", { name: "跳过此版本" })).toBeVisible();
+  });
+
+  test("launcher update page shows an up-to-date card without update actions", async () => {
+    render(
+      <App
+        bridge={makeBridge({
+          installed: true,
+          checkLauncherUpdateStatus: async () => ({
+            ...launcherUpdateStatus,
+            kind: "upToDate",
+            title: "启动器已是最新",
+            message: "当前启动器版本 0.1.19",
+            currentVersion: "0.1.19",
+            latestVersion: "0.1.19",
+            releaseUrl: null,
+            actions: []
+          })
+        })}
+      />
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+    fireEvent.click(await screen.findByRole("button", { name: /启动器更新/ }));
+
+    const card = await screen.findByLabelText("启动器版本状态");
+    expect(card).toHaveClass("upToDate");
+    expect(card).toHaveTextContent("当前 v0.1.19");
+    expect(screen.queryByRole("button", { name: "应用更新" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "稍后提醒" })).toBeNull();
+    expect(screen.getByRole("button", { name: "检查更新" })).toBeVisible();
   });
 
   test("polls launcher self-update progress when launcher events are not delivered", async () => {

@@ -216,7 +216,7 @@ function InstallerFooter({ controller }: { controller: ReadyAppController }) {
     return (
       <>
         <span className="footer-note">官方 Microsoft Store 分发</span>
-        <button className="primary-button" onClick={() => setInstallerStep("mode")} type="button">
+        <button className="button primary" onClick={() => setInstallerStep("mode")} type="button">
           开始安装
         </button>
       </>
@@ -226,10 +226,10 @@ function InstallerFooter({ controller }: { controller: ReadyAppController }) {
   if (installerStep === "mode") {
     return (
       <>
-        <button className="secondary-button" onClick={() => setInstallerStep("welcome")} type="button">
+        <button className="button secondary" onClick={() => setInstallerStep("welcome")} type="button">
           返回
         </button>
-        <button className="primary-button" onClick={() => setInstallerStep("path")} type="button">
+        <button className="button primary" onClick={() => setInstallerStep("path")} type="button">
           下一步
         </button>
       </>
@@ -239,11 +239,11 @@ function InstallerFooter({ controller }: { controller: ReadyAppController }) {
   if (installerStep === "path") {
     return (
       <>
-        <button className="secondary-button" onClick={() => setInstallerStep("mode")} type="button">
+        <button className="button secondary" onClick={() => setInstallerStep("mode")} type="button">
           返回
         </button>
         <button
-          className="primary-button"
+          className="button primary"
           disabled={installForm.root.trim() === ""}
           onClick={() => setInstallerStep("options")}
           type="button"
@@ -257,11 +257,11 @@ function InstallerFooter({ controller }: { controller: ReadyAppController }) {
   if (installerStep === "options") {
     return (
       <>
-        <button className="secondary-button" onClick={() => setInstallerStep("path")} type="button">
+        <button className="button secondary" onClick={() => setInstallerStep("path")} type="button">
           返回
         </button>
         <button
-          className="primary-button"
+          className="button primary"
           disabled={installState !== "idle"}
           onClick={startInstall}
           type="button"
@@ -280,7 +280,7 @@ function InstallerFooter({ controller }: { controller: ReadyAppController }) {
       <>
         <span />
         <button
-          className="secondary-button"
+          className="button secondary"
           disabled={installState === "cancelling"}
           onClick={cancelInstall}
           type="button"
@@ -296,7 +296,7 @@ function InstallerFooter({ controller }: { controller: ReadyAppController }) {
       <>
         <span />
         <button
-          className="primary-button"
+          className="button primary"
           disabled={launchState !== "idle"}
           onClick={launchInstalledCodex}
           type="button"
@@ -309,10 +309,10 @@ function InstallerFooter({ controller }: { controller: ReadyAppController }) {
 
   return (
     <>
-      <button className="secondary-button" onClick={() => setInstallerStep("options")} type="button">
+      <button className="button secondary" onClick={() => setInstallerStep("options")} type="button">
         返回
       </button>
-      <button className="primary-button" onClick={startInstall} type="button">
+      <button className="button primary" onClick={startInstall} type="button">
         重试
       </button>
     </>

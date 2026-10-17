@@ -47,7 +47,7 @@ export function LoadingSplash() {
     <ProductShell
       bodyClassName="boot-body"
       footer={<span className="footer-note">官方 Microsoft Store 分发</span>}
-      modeLabel="安装向导"
+      modeLabel="中文安装更新助手"
       productName="Codex Windows 中文助手"
       stageLabel="正在加载"
       title="正在启动 Codex Windows 中文助手"

@@ -1,11 +1,13 @@
 import {
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
   CircleAlert,
   Download,
   ExternalLink,
   FolderOpen,
   HardDrive,
+  Info,
   Layers3,
   LayoutDashboard,
   Link2,
@@ -19,7 +21,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type {
   InstalledVersionStatus,
   LauncherUpdateStatus,
@@ -28,17 +30,25 @@ import type {
 } from "../../bridge";
 import {
   launcherUpdateActionLabels,
-  fetcherLabels,
   updatePolicyLabels,
   updateActionLabels,
   workspacePanelLabel
 } from "../../appModel";
-import type { UpdateAction } from "../../bridge";
+import type { LauncherUpdateAction, UpdateAction } from "../../bridge";
 import type { ReadyAppController } from "../../useAppController";
 import { AssistantMark } from "../../components/AssistantMark";
-import { ProgressScreen } from "../../components/Progress";
+import { ProgressInline, ProgressScreen } from "../../components/Progress";
+import { StatusMessage, type Feedback } from "../../components/StatusMessage";
 
 const updateDeferActionOrder: Exclude<UpdateAction, "updateNow">[] = [
+  "notNow",
+  "snoozeOneDay",
+  "snoozeSevenDays",
+  "skipThisVersion",
+  "never"
+];
+
+const launcherDeferActionOrder: Exclude<LauncherUpdateAction, "updateNow" | "viewRelease">[] = [
   "notNow",
   "snoozeOneDay",
   "snoozeSevenDays",
@@ -60,11 +70,6 @@ type PendingSwitch = {
 
 type BusyAction = "launch" | "delete" | "settings" | "shortcut" | null;
 
-type ShortcutActionFeedback = {
-  error: boolean;
-  message: string;
-};
-
 export function InstalledWorkspace({ controller }: { controller: ReadyAppController }) {
   const {
     bridge,
@@ -76,7 +81,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
   } = controller;
   const [inventory, setInventory] = useState<VersionInventory | null>(null);
   const [inventoryError, setInventoryError] = useState<string | null>(null);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<Feedback | null>(null);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [pendingSwitch, setPendingSwitch] = useState<PendingSwitch | null>(null);
   const [pendingDelete, setPendingDelete] = useState<InstalledVersionStatus | null>(null);
@@ -130,6 +135,10 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
   }, [refreshInventory]);
 
   useEffect(() => {
+    setActionFeedback(null);
+  }, [workspacePanel]);
+
+  useEffect(() => {
     if (updateEvent?.kind === "done") {
       void refreshInventory();
     }
@@ -147,7 +156,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
 
   const launchVersion = async (targetVersion: string | null, switchRunning = false) => {
     setBusyAction("launch");
-    setActionMessage(null);
+    setActionFeedback(null);
     try {
       const result = await bridge.launchCodex({
         version: targetVersion,
@@ -161,10 +170,10 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
         return;
       }
       setPendingSwitch(null);
-      setActionMessage(result.message);
+      setActionFeedback({ message: result.message, tone: "success" });
       await refreshInventory();
     } catch (cause) {
-      setActionMessage(errorMessage(cause, "启动失败"));
+      setActionFeedback({ message: errorMessage(cause, "启动失败"), tone: "error" });
     } finally {
       setBusyAction(null);
     }
@@ -175,14 +184,14 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
       return;
     }
     setBusyAction("delete");
-    setActionMessage(null);
+    setActionFeedback(null);
     try {
       const result = await bridge.deleteInstalledVersion(pendingDelete.version);
       commitInventory(result.inventory);
-      setActionMessage(result.message);
+      setActionFeedback({ message: result.message, tone: "success" });
       setPendingDelete(null);
     } catch (cause) {
-      setActionMessage(errorMessage(cause, "删除版本失败"));
+      setActionFeedback({ message: errorMessage(cause, "删除版本失败"), tone: "error" });
     } finally {
       setBusyAction(null);
     }
@@ -194,7 +203,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
     updatePolicy: UpdatePolicy
   ) => {
     setBusyAction("settings");
-    setActionMessage(null);
+    setActionFeedback(null);
     try {
       const result = await bridge.saveVersionSettings({
         keepVersions,
@@ -204,25 +213,22 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
       commitInventory(result.inventory);
       return true;
     } catch (cause) {
-      setActionMessage(errorMessage(cause, "保存版本策略失败"));
+      setActionFeedback({ message: errorMessage(cause, "保存版本策略失败"), tone: "error" });
       return false;
     } finally {
       setBusyAction(null);
     }
   };
 
-  const setDesktopShortcut = async (enabled: boolean): Promise<ShortcutActionFeedback> => {
+  const setDesktopShortcut = async (enabled: boolean): Promise<Feedback> => {
     setBusyAction("shortcut");
-    setActionMessage(null);
+    setActionFeedback(null);
     try {
       const result = await bridge.setDesktopShortcut(enabled);
       commitInventory(result.inventory);
-      return { error: false, message: result.message };
+      return { message: result.message, tone: "success" };
     } catch (cause) {
-      return {
-        error: true,
-        message: errorMessage(cause, "修改桌面快捷方式失败")
-      };
+      return { message: errorMessage(cause, "修改桌面快捷方式失败"), tone: "error" };
     } finally {
       setBusyAction(null);
     }
@@ -230,18 +236,15 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
 
   const setAssistantDesktopShortcut = async (
     enabled: boolean
-  ): Promise<ShortcutActionFeedback> => {
+  ): Promise<Feedback> => {
     setBusyAction("shortcut");
-    setActionMessage(null);
+    setActionFeedback(null);
     try {
       const result = await bridge.setAssistantDesktopShortcut(enabled);
       commitInventory(result.inventory);
-      return { error: false, message: result.message };
+      return { message: result.message, tone: "success" };
     } catch (cause) {
-      return {
-        error: true,
-        message: errorMessage(cause, "修改中文助手桌面快捷方式失败")
-      };
+      return { message: errorMessage(cause, "修改中文助手桌面快捷方式失败"), tone: "error" };
     } finally {
       setBusyAction(null);
     }
@@ -283,16 +286,18 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
             <p className="console-kicker">{workspacePanelLabel[workspacePanel]}</p>
             <h1>{assistantName}</h1>
           </div>
-          <div className="header-status">
-            <span className={updateStatus.kind === "error" ? "status-dot error" : "status-dot"} />
-            {updateStatus.kind === "available" ? "有可用更新" : updateStatus.title}
-          </div>
+          {updateStatus.kind === "available" || updateStatus.kind === "error" ? (
+            <div className="header-status">
+              <span className={updateStatus.kind === "error" ? "status-dot error" : "status-dot"} />
+              {updateStatus.kind === "available" ? "有可用更新" : updateStatus.title}
+            </div>
+          ) : null}
         </header>
 
         <div className="console-content">
           {workspacePanel === "home" ? (
             <OverviewPanel
-              actionMessage={actionMessage}
+              feedback={actionFeedback}
               busy={busyAction === "launch"}
               controller={controller}
               defaultVersion={defaultVersion}
@@ -307,7 +312,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
           ) : null}
           {workspacePanel === "versions" ? (
             <VersionsPanel
-              actionMessage={actionMessage}
+              feedback={actionFeedback}
               busy={busyAction}
               inventory={inventory}
               inventoryError={inventoryError}
@@ -317,7 +322,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
           ) : null}
           {workspacePanel === "settings" ? (
             <SettingsPanel
-              actionMessage={actionMessage}
+              feedback={actionFeedback}
               busy={busyAction !== null}
               controller={controller}
               inventory={inventory}
@@ -336,7 +341,8 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
 
       {pendingSwitch ? (
         <ConfirmDialog
-          confirmLabel="关闭并切换"
+          busy={busyAction === "launch"}
+          confirmLabel={busyAction === "launch" ? "正在切换" : "关闭并切换"}
           description={`当前正在运行 ${pendingSwitch.runningVersions.join(
             "、"
           )}。切换会关闭当前应用并启动 ${pendingSwitch.targetVersion ?? "最新版"}。`}
@@ -351,6 +357,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
 
       {pendingDelete ? (
         <ConfirmDialog
+          busy={busyAction === "delete"}
           confirmLabel={busyAction === "delete" ? "正在删除" : "删除版本"}
           danger
           description={`将从本机删除 ${pendingDelete.productName} ${pendingDelete.version}，登录和项目数据会保留。`}
@@ -365,7 +372,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
 }
 
 function OverviewPanel({
-  actionMessage,
+  feedback,
   busy,
   controller,
   defaultVersion,
@@ -377,7 +384,7 @@ function OverviewPanel({
   runningIsOld,
   runningVersion
 }: {
-  actionMessage: string | null;
+  feedback: Feedback | null;
   busy: boolean;
   controller: ReadyAppController;
   defaultVersion: string | null;
@@ -398,18 +405,12 @@ function OverviewPanel({
     updateStatus
   } = controller;
 
-  if (updateState !== "idle" && updateEvent) {
-    return (
-      <ProgressScreen
-        detail={updateEvent.detail}
-        indeterminate={updateProgress === null}
-        progress={updateProgress}
-        title={updateEvent.title}
-      />
-    );
-  }
-
+  const updating = updateState !== "idle" && Boolean(updateEvent);
+  const checking = controller.manualUpdateChecking;
   const totalSize = inventory?.versions.reduce((sum, item) => sum + item.sizeBytes, 0) ?? 0;
+  const deferActions = updateDeferActionOrder.filter((action) =>
+    updateStatus.actions.includes(action)
+  );
 
   return (
     <section className="console-view overview-view">
@@ -420,7 +421,7 @@ function OverviewPanel({
             <strong>当前仍运行历史版本 {runningVersion}</strong>
             <span>最新版 {defaultVersion} 已就绪</span>
           </div>
-          <button className="button secondary" onClick={onSwitchLatest} type="button">
+          <button className="button secondary" disabled={busy || updating} onClick={onSwitchLatest} type="button">
             <RefreshCw size={15} />
             切换到最新版
           </button>
@@ -435,7 +436,7 @@ function OverviewPanel({
         </div>
         <button
           className="launch-button"
-          disabled={!defaultVersion || busy}
+          disabled={!defaultVersion || busy || updating}
           onClick={onLaunch}
           type="button"
         >
@@ -443,6 +444,8 @@ function OverviewPanel({
           {busy ? "启动中" : `启动 ${productName}`}
         </button>
       </div>
+
+      {feedback ? <StatusMessage tone={feedback.tone}>{feedback.message}</StatusMessage> : null}
 
       <div className="metric-strip" aria-label="安装摘要">
         <Metric icon={<Layers3 size={17} />} label="已安装" value={`${inventory?.versions.length ?? 0} 个版本`} />
@@ -458,70 +461,125 @@ function OverviewPanel({
           title={inventory?.root}
           value={inventory?.root || "正在读取"}
         />
-        <Metric
-          icon={<Download size={17} />}
-          label="下载方式"
-          value={inventory ? fetcherLabels[inventory.fetcher] : "正在读取"}
-        />
-        <Metric
-          icon={<Link2 size={17} />}
-          label="稳定入口"
-          value={inventory?.useCurrentJunction ? "versions\\current" : "未启用"}
-        />
       </div>
 
-      <div className="update-band">
-        <div>
-          <span className="section-label">官方更新</span>
-          <strong aria-live="polite">{controller.manualUpdateChecking ? "正在检查更新…" : updateStatus.title}</strong>
-          {controller.manualUpdateChecking ? <CheckProgress /> : null}
+      {updating && updateEvent ? (
+        <div className="update-band update-band-progress">
+          <ProgressInline
+            detail={updateEvent.detail}
+            progress={updateProgress}
+            title={updateEvent.title}
+          />
         </div>
-        <div className="update-actions">
-          {!controller.manualUpdateChecking && updateStatus.actions.includes("updateNow") ? (
-            <button className="button primary" onClick={startUpdate} type="button">
-              <Download size={15} />
-              立即更新
-            </button>
-          ) : !controller.manualUpdateChecking && updateStatus.kind === "upToDate" ? (
-            <span className="verified-state"><CheckCircle2 size={16} /> 已同步</span>
-          ) : null}
-          <button className="button secondary" disabled={controller.manualUpdateChecking || controller.updateState !== "idle"} onClick={() => void controller.checkUpdateNow()} type="button">
-            <RefreshCw size={15} />{controller.manualUpdateChecking ? "正在检查…" : "检查更新"}
-          </button>
-        </div>
-      </div>
-
-      {!controller.manualUpdateChecking && updateStatus.actions.length > 1 ? (
-        <div className="defer-row">
-          {updateDeferActionOrder
-            .filter((action) => updateStatus.actions.includes(action))
-            .map((action) => (
-              <button key={action} onClick={() => applyUpdateAction(action)} type="button">
-                {updateActionLabels[action]}
+      ) : (
+        <div className="update-band">
+          <div>
+            <span className="section-label">官方更新</span>
+            <strong aria-live="polite">{checking ? "正在检查更新…" : updateStatus.title}</strong>
+            {checking ? <CheckProgress /> : null}
+          </div>
+          <div className="update-actions">
+            {!checking && updateStatus.actions.includes("updateNow") ? (
+              <button className="button primary" onClick={startUpdate} type="button">
+                <Download size={15} />
+                立即更新
               </button>
-            ))}
+            ) : !checking && updateStatus.kind === "upToDate" ? (
+              <span className="verified-state"><CheckCircle2 size={16} /> 已同步</span>
+            ) : null}
+            <button className="button secondary" disabled={checking || updateState !== "idle"} onClick={() => void controller.checkUpdateNow()} type="button">
+              <RefreshCw size={15} />{checking ? "正在检查…" : "检查更新"}
+            </button>
+          </div>
         </div>
+      )}
+
+      {!updating && !checking && deferActions.length > 0 ? (
+        <DeferActions actions={deferActions} labels={updateActionLabels} onSelect={applyUpdateAction} />
       ) : null}
 
-      {inventoryError ? <p className="inline-message error">{inventoryError}</p> : null}
-      {actionMessage ? <p className="inline-message">{actionMessage}</p> : null}
-      {updateEvent?.kind === "done" ? <p className="inline-message success">{updateEvent.detail}</p> : null}
+      {inventoryError ? <StatusMessage tone="error">{inventoryError}</StatusMessage> : null}
+      {updateEvent?.kind === "done" ? <StatusMessage tone="success">{updateEvent.detail}</StatusMessage> : null}
       {updateEvent?.kind === "error" ? (
-        <p className="inline-message error">{updateEvent.message ?? updateEvent.detail}</p>
+        <StatusMessage tone="error">{updateEvent.message ?? updateEvent.detail}</StatusMessage>
       ) : null}
     </section>
   );
 }
 
+function DeferActions<Action extends string>({
+  actions,
+  labels,
+  onSelect
+}: {
+  actions: Action[];
+  labels: Record<Action, string>;
+  onSelect: (action: Action) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [primary, ...more] = actions;
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutside = (event: MouseEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutside);
+    return () => document.removeEventListener("mousedown", closeOnOutside);
+  }, [open]);
+
+  const select = (action: Action) => {
+    setOpen(false);
+    onSelect(action);
+  };
+
+  return (
+    <div
+      className="defer-row"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") setOpen(false);
+      }}
+      ref={containerRef}
+    >
+      <button onClick={() => select(primary)} type="button">
+        {labels[primary]}
+      </button>
+      {more.length > 0 ? (
+        <span className="defer-more">
+          <button
+            aria-expanded={open}
+            aria-haspopup="menu"
+            onClick={() => setOpen((value) => !value)}
+            type="button"
+          >
+            其他提醒方式
+            <ChevronDown aria-hidden="true" size={13} />
+          </button>
+          {open ? (
+            <div aria-label="其他提醒方式" className="defer-menu" role="menu">
+              {more.map((action) => (
+                <button key={action} onClick={() => select(action)} role="menuitem" type="button">
+                  {labels[action]}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function VersionsPanel({
-  actionMessage,
+  feedback,
   busy,
   inventory,
   inventoryError,
   onDelete,
   onLaunch
 }: {
-  actionMessage: string | null;
+  feedback: Feedback | null;
   busy: BusyAction;
   inventory: VersionInventory | null;
   inventoryError: string | null;
@@ -538,11 +596,13 @@ function VersionsPanel({
         <span>{inventory?.versions.length ?? 0} 个</span>
       </div>
 
+      {feedback ? <StatusMessage tone={feedback.tone}>{feedback.message}</StatusMessage> : null}
+
       <div className="version-list" role="list">
         {!inventory && !inventoryError ? (
           <div className="empty-state"><LoaderCircle className="spin" size={22} />正在扫描版本</div>
         ) : null}
-        {inventoryError ? <div className="empty-state error">{inventoryError}</div> : null}
+        {inventoryError ? <StatusMessage className="empty-state" tone="error">{inventoryError}</StatusMessage> : null}
         {inventory && inventory.versions.length === 0 ? (
           <div className="empty-state">未找到可启动版本</div>
         ) : null}
@@ -587,13 +647,12 @@ function VersionsPanel({
           </div>
         ))}
       </div>
-      {actionMessage ? <p className="inline-message">{actionMessage}</p> : null}
     </section>
   );
 }
 
 function SettingsPanel({
-  actionMessage,
+  feedback,
   busy,
   controller,
   inventory,
@@ -602,13 +661,13 @@ function SettingsPanel({
   onSetDesktopShortcut,
   saving
 }: {
-  actionMessage: string | null;
+  feedback: Feedback | null;
   busy: boolean;
   controller: ReadyAppController;
   inventory: VersionInventory | null;
   onSave: (count: number, keepAll: boolean, updatePolicy: UpdatePolicy) => Promise<boolean>;
-  onSetAssistantDesktopShortcut: (enabled: boolean) => Promise<ShortcutActionFeedback>;
-  onSetDesktopShortcut: (enabled: boolean) => Promise<ShortcutActionFeedback>;
+  onSetAssistantDesktopShortcut: (enabled: boolean) => Promise<Feedback>;
+  onSetDesktopShortcut: (enabled: boolean) => Promise<Feedback>;
   saving: boolean;
 }) {
   const { launcherUpdateCheckReady, launcherUpdateStatus, setWorkspacePanel } = controller;
@@ -624,9 +683,9 @@ function SettingsPanel({
   const [dirty, setDirty] = useState(false);
   const [shortcutIntent, setShortcutIntent] = useState<boolean | null>(null);
   const [assistantShortcutIntent, setAssistantShortcutIntent] = useState<boolean | null>(null);
-  const [shortcutFeedback, setShortcutFeedback] = useState<ShortcutActionFeedback | null>(null);
+  const [shortcutFeedback, setShortcutFeedback] = useState<Feedback | null>(null);
   const [assistantShortcutFeedback, setAssistantShortcutFeedback] =
-    useState<ShortcutActionFeedback | null>(null);
+    useState<Feedback | null>(null);
   const editRevision = useRef(0);
   const savedKeepAll = inventory?.keepAllVersions;
   const savedCount = inventory?.keepVersions;
@@ -769,6 +828,7 @@ function SettingsPanel({
         </div>
 
         <div className="strategy-footer">
+          {feedback ? <StatusMessage tone={feedback.tone}>{feedback.message}</StatusMessage> : null}
           <button
             className="button primary save-settings"
             disabled={busy || !inventory || !dirty}
@@ -825,8 +885,6 @@ function SettingsPanel({
           <span><strong>卸载助手</strong><small>保留登录和项目数据</small></span>
         </button>
       </section>
-
-      {actionMessage ? <p className="inline-message">{actionMessage}</p> : null}
     </section>
   );
 }
@@ -844,7 +902,7 @@ function ShortcutSetting({
   busy: boolean;
   description: string;
   exists: boolean;
-  feedback: ShortcutActionFeedback | null;
+  feedback: Feedback | null;
   intent: boolean | null;
   loaded: boolean;
   onSet: (enabled: boolean) => Promise<void>;
@@ -856,12 +914,9 @@ function ShortcutSetting({
         <strong>{title}</strong>
         <span>{description}</span>
         {feedback ? (
-          <p
-            className={feedback.error ? "shortcut-feedback error" : "shortcut-feedback"}
-            role="status"
-          >
+          <StatusMessage className="shortcut-feedback" tone={feedback.tone}>
             {feedback.message}
-          </p>
+          </StatusMessage>
         ) : null}
       </div>
       <div className="shortcut-actions">
@@ -962,7 +1017,7 @@ function UninstallPanel({ controller }: { controller: ReadyAppController }) {
       <button className="button danger" disabled={uninstallStatus.kind !== "ready"} onClick={startUninstall} type="button">
         <Trash2 size={15} />确认卸载
       </button>
-      {uninstallMessage ? <p className="inline-message error">{uninstallMessage}</p> : null}
+      {uninstallMessage ? <StatusMessage tone="error">{uninstallMessage}</StatusMessage> : null}
     </section>
   );
 }
@@ -1000,35 +1055,82 @@ function LauncherUpdatePanel({ controller }: { controller: ReadyAppController })
     );
   }
 
+  const checking = controller.manualLauncherChecking;
+  const deferActions = launcherDeferActionOrder.filter((action) =>
+    launcherUpdateStatus.actions.includes(action)
+  );
+  const showRelease =
+    !checking &&
+    Boolean(launcherUpdateStatus.releaseUrl) &&
+    launcherUpdateStatus.actions.includes("viewRelease");
+
   return (
-    <section className="console-view maintenance-view">
+    <section className="console-view maintenance-view launcher-view">
       <button className="back-button" onClick={() => setWorkspacePanel("settings")} type="button"><ArrowLeft size={15} />返回设置</button>
-      <span className="section-label">启动器自更新</span>
-      <h2 aria-live="polite">{controller.manualLauncherChecking ? "正在检查更新…" : launcherUpdateStatus.title}</h2>
-      {controller.manualLauncherChecking ? <CheckProgress /> : <p>{launcherUpdateStatus.message}</p>}
-      <div className="maintenance-actions">
-        <button className="button secondary" disabled={controller.manualLauncherChecking || !controller.launcherUpdateCheckReady} onClick={() => void controller.checkLauncherNow()} type="button">
-          <RefreshCw size={15} />{controller.manualLauncherChecking ? "正在检查…" : "检查更新"}
-        </button>
-        {!controller.manualLauncherChecking && launcherUpdateStatus.actions.includes("updateNow") ? (
-          <button className="button primary" onClick={startLauncherUpdate} type="button"><Download size={15} />应用更新</button>
-        ) : null}
-        {!controller.manualLauncherChecking && launcherUpdateStatus.actions
-          .filter((action) => action !== "updateNow" && action !== "viewRelease")
-          .map((action) => (
-            <button className="button secondary" key={action} onClick={() => applyLauncherUpdateAction(action)} type="button">
-              {launcherUpdateActionLabels[action]}
-            </button>
-          ))}
-        {launcherUpdateStatus.releaseUrl && launcherUpdateStatus.actions.includes("viewRelease") ? (
-          <a className="button secondary" href={launcherUpdateStatus.releaseUrl} rel="noreferrer" target="_blank">
-            <ExternalLink size={15} />查看发布页
-          </a>
-        ) : null}
-      </div>
-      {launcherUpdateMessage ? <p className="inline-message">{launcherUpdateMessage}</p> : null}
+      <section
+        aria-label="启动器版本状态"
+        className={`launcher-card ${checking ? "checking" : launcherUpdateStatus.kind}`}
+      >
+        <span aria-hidden="true" className="launcher-card-icon">
+          <LauncherStatusIcon checking={checking} kind={launcherUpdateStatus.kind} />
+        </span>
+        <div className="launcher-card-copy">
+          <h2 aria-live="polite">{checking ? "正在检查更新…" : launcherUpdateStatus.title}</h2>
+          {checking ? <CheckProgress /> : <p>{launcherVersionLine(launcherUpdateStatus)}</p>}
+        </div>
+        <div className="launcher-card-actions">
+          {showRelease && launcherUpdateStatus.releaseUrl ? (
+            <a className="button subtle" href={launcherUpdateStatus.releaseUrl} rel="noreferrer" target="_blank">
+              <ExternalLink size={15} />查看发布页
+            </a>
+          ) : null}
+          <button className="button secondary" disabled={checking || !controller.launcherUpdateCheckReady} onClick={() => void controller.checkLauncherNow()} type="button">
+            <RefreshCw size={15} />{checking ? "正在检查…" : "检查更新"}
+          </button>
+          {!checking && launcherUpdateStatus.actions.includes("updateNow") ? (
+            <button className="button primary" onClick={startLauncherUpdate} type="button"><Download size={15} />应用更新</button>
+          ) : null}
+        </div>
+      </section>
+      {!checking && deferActions.length > 0 ? (
+        <DeferActions actions={deferActions} labels={launcherUpdateActionLabels} onSelect={applyLauncherUpdateAction} />
+      ) : null}
+      {!checking && launcherUpdateStatus.kind === "error" ? (
+        <StatusMessage tone="error">{launcherUpdateStatus.message}</StatusMessage>
+      ) : null}
+      {launcherUpdateMessage ? <StatusMessage>{launcherUpdateMessage}</StatusMessage> : null}
     </section>
   );
+}
+
+function LauncherStatusIcon({
+  checking,
+  kind
+}: {
+  checking: boolean;
+  kind: LauncherUpdateStatus["kind"];
+}) {
+  if (checking) return <LoaderCircle className="spin" size={20} />;
+  if (kind === "upToDate") return <CheckCircle2 size={20} />;
+  if (kind === "available") return <Rocket size={20} />;
+  if (kind === "error") return <CircleAlert size={20} />;
+  return <Info size={20} />;
+}
+
+// Status.message repeats the versions in prose; the card shows them as a compact
+// comparison and falls back to the message when versions are unknown.
+function launcherVersionLine(status: LauncherUpdateStatus) {
+  const { currentVersion, latestVersion } = status;
+  if (status.kind === "available" && currentVersion && latestVersion) {
+    return `当前 v${currentVersion} → 最新 v${latestVersion}`;
+  }
+  if (status.kind === "upToDate" && currentVersion) {
+    return `当前 v${currentVersion}`;
+  }
+  if (status.kind === "error") {
+    return currentVersion ? `当前 v${currentVersion}` : "无法确认最新版本";
+  }
+  return status.message;
 }
 
 function CheckProgress() {
@@ -1088,6 +1190,7 @@ function Metric({
 }
 
 function ConfirmDialog({
+  busy = false,
   confirmLabel,
   danger = false,
   description,
@@ -1096,6 +1199,7 @@ function ConfirmDialog({
   onConfirm,
   title
 }: {
+  busy?: boolean;
   confirmLabel: string;
   danger?: boolean;
   description: string;
@@ -1104,16 +1208,60 @@ function ConfirmDialog({
   onConfirm: () => void;
   title: string;
 }) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const dialogRef = useRef<HTMLElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  // Focus starts on cancel so a stray Enter never confirms a destructive action.
+  useEffect(() => {
+    cancelRef.current?.focus();
+  }, []);
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (!busy) onCancel();
+      return;
+    }
+    if (event.key !== "Tab" || !dialogRef.current) return;
+    const focusable = Array.from(
+      dialogRef.current.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   return (
     <div className="modal-backdrop">
-      <section aria-modal="true" className="confirm-dialog" role="dialog">
-        <button aria-label="关闭" className="modal-close" onClick={onCancel} type="button"><X size={17} /></button>
+      <section
+        aria-busy={busy}
+        aria-describedby={descriptionId}
+        aria-labelledby={titleId}
+        aria-modal="true"
+        className="confirm-dialog"
+        onKeyDown={handleKeyDown}
+        ref={dialogRef}
+        role="dialog"
+      >
+        <button aria-label="关闭" className="modal-close" disabled={busy} onClick={onCancel} type="button"><X size={17} /></button>
         <div className={danger ? "dialog-icon danger" : "dialog-icon"}>{icon}</div>
-        <h2>{title}</h2>
-        <p>{description}</p>
+        <h2 id={titleId}>{title}</h2>
+        <p id={descriptionId}>{description}</p>
         <div className="dialog-actions">
-          <button className="button secondary" onClick={onCancel} type="button">取消</button>
-          <button className={danger ? "button danger" : "button primary"} onClick={onConfirm} type="button">{confirmLabel}</button>
+          <button className="button secondary" disabled={busy} onClick={onCancel} ref={cancelRef} type="button">取消</button>
+          <button className={danger ? "button danger" : "button primary"} disabled={busy} onClick={onConfirm} type="button">
+            {busy ? <LoaderCircle className="spin" size={15} /> : null}
+            {confirmLabel}
+          </button>
         </div>
       </section>
     </div>
