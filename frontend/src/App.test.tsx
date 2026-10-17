@@ -1754,6 +1754,113 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(screen.getByRole("button", { name: "检查更新" })).toBeVisible();
   });
 
+  test("launcher update completion offers an immediate restart", async () => {
+    let emitLauncherUpdateEvent: ((event: LauncherUpdateEvent) => void) | null = null;
+    const restartLauncher = vi.fn(async () => {});
+    render(
+      <App
+        bridge={makeBridge({
+          installed: true,
+          restartLauncher,
+          onLauncherUpdateEvent: (handler) => {
+            emitLauncherUpdateEvent = handler;
+            return () => {};
+          }
+        })}
+      />
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+    fireEvent.click(await screen.findByRole("button", { name: /启动器更新/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "应用更新" }));
+    act(() => {
+      emitLauncherUpdateEvent?.({
+        kind: "done",
+        title: "自更新完成",
+        detail: "已更新到 v0.2.0，重启后生效",
+        progress: 1,
+        message: null
+      });
+    });
+
+    const card = await screen.findByLabelText("启动器更新结果");
+    expect(card).toHaveTextContent("已更新到 v0.2.0，重启后生效");
+    fireEvent.click(screen.getByRole("button", { name: "立即重启" }));
+    expect(await screen.findByRole("button", { name: "正在重启" })).toBeDisabled();
+    expect(restartLauncher).toHaveBeenCalledTimes(1);
+  });
+
+  test("launcher restart failure stays on the result card with a reason", async () => {
+    let emitLauncherUpdateEvent: ((event: LauncherUpdateEvent) => void) | null = null;
+    render(
+      <App
+        bridge={makeBridge({
+          installed: true,
+          restartLauncher: async () => {
+            throw new Error("启动新版启动器失败：拒绝访问");
+          },
+          onLauncherUpdateEvent: (handler) => {
+            emitLauncherUpdateEvent = handler;
+            return () => {};
+          }
+        })}
+      />
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+    fireEvent.click(await screen.findByRole("button", { name: /启动器更新/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "应用更新" }));
+    act(() => {
+      emitLauncherUpdateEvent?.({
+        kind: "done",
+        title: "自更新完成",
+        detail: "已更新到 v0.2.0，重启后生效",
+        progress: 1,
+        message: null
+      });
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "立即重启" }));
+    expect(await screen.findByText("启动新版启动器失败：拒绝访问")).toBeVisible();
+    expect(screen.getByRole("button", { name: "立即重启" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "稍后重启" }));
+    expect(await screen.findByRole("heading", { name: "保留与维护" })).toBeVisible();
+  });
+
+  test("launcher update failure shows a Chinese summary and copies the raw error", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    let emitLauncherUpdateEvent: ((event: LauncherUpdateEvent) => void) | null = null;
+    render(
+      <App
+        bridge={makeBridge({
+          installed: true,
+          onLauncherUpdateEvent: (handler) => {
+            emitLauncherUpdateEvent = handler;
+            return () => {};
+          }
+        })}
+      />
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+    fireEvent.click(await screen.findByRole("button", { name: /启动器更新/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "应用更新" }));
+    act(() => {
+      emitLauncherUpdateEvent?.({
+        kind: "error",
+        title: "自更新失败",
+        detail: "SHA-256 mismatch: expected aa, got bb",
+        progress: null,
+        message: "下载的文件校验失败，当前版本未改动。"
+      });
+    });
+
+    const card = await screen.findByLabelText("启动器更新结果");
+    expect(card).toHaveTextContent("下载的文件校验失败，当前版本未改动。");
+    expect(card).not.toHaveTextContent("SHA-256 mismatch");
+    fireEvent.click(screen.getByRole("button", { name: "复制错误详情" }));
+    expect(await screen.findByText("已复制，可粘贴到反馈中")).toBeVisible();
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("SHA-256 mismatch"));
+  });
+
   test("polls launcher self-update progress when launcher events are not delivered", async () => {
     let polls = 0;
     const bridge = makeBridge({
@@ -1877,6 +1984,7 @@ function makeBridge(
     onUninstallEvent: () => () => {},
     checkLauncherUpdateStatus: async () => launcherUpdateStatus,
     startLauncherUpdate: async () => ({ accepted: true }),
+    restartLauncher: async () => {},
     getLauncherUpdateProgress: async () => null,
     applyLauncherUpdateAction: async () => ({
       applied: true,

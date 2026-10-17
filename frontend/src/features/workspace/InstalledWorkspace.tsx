@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   ChevronDown,
   CircleAlert,
+  Copy,
   Download,
   ExternalLink,
   FolderOpen,
@@ -24,6 +25,7 @@ import {
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type {
   InstalledVersionStatus,
+  LauncherUpdateEvent,
   LauncherUpdateStatus,
   UpdatePolicy,
   VersionInventory
@@ -1054,15 +1056,11 @@ function LauncherUpdatePanel({ controller }: { controller: ReadyAppController })
   } = controller;
 
   if (launcherUpdateState !== "idle" || launcherUpdateEvent) {
-    if (launcherUpdateEvent?.kind === "done" || launcherUpdateEvent?.kind === "error") {
-      return (
-        <ResultState
-          error={launcherUpdateEvent.kind === "error"}
-          message={launcherUpdateEvent.message ?? launcherUpdateEvent.detail}
-          onBack={() => setWorkspacePanel("settings")}
-          title={launcherUpdateEvent.title}
-        />
-      );
+    if (launcherUpdateEvent?.kind === "done") {
+      return <LauncherUpdateDone controller={controller} event={launcherUpdateEvent} />;
+    }
+    if (launcherUpdateEvent?.kind === "error") {
+      return <LauncherUpdateFailed event={launcherUpdateEvent} onBack={() => setWorkspacePanel("settings")} />;
     }
     return (
       <ProgressScreen
@@ -1118,6 +1116,94 @@ function LauncherUpdatePanel({ controller }: { controller: ReadyAppController })
         <StatusMessage tone="error">{launcherUpdateStatus.message}</StatusMessage>
       ) : null}
       {launcherUpdateMessage ? <StatusMessage>{launcherUpdateMessage}</StatusMessage> : null}
+    </section>
+  );
+}
+
+function LauncherUpdateDone({
+  controller,
+  event
+}: {
+  controller: ReadyAppController;
+  event: LauncherUpdateEvent;
+}) {
+  const [restarting, setRestarting] = useState(false);
+  const [restartError, setRestartError] = useState<string | null>(null);
+
+  const restart = async () => {
+    setRestarting(true);
+    setRestartError(null);
+    try {
+      await controller.bridge.restartLauncher();
+    } catch (cause) {
+      setRestartError(errorMessage(cause, "重启失败，请手动关闭后重新打开助手"));
+      setRestarting(false);
+    }
+  };
+
+  return (
+    <section className="console-view maintenance-view launcher-view">
+      <button className="back-button" onClick={() => controller.setWorkspacePanel("settings")} type="button"><ArrowLeft size={15} />返回设置</button>
+      <section aria-label="启动器更新结果" className="launcher-card upToDate">
+        <span aria-hidden="true" className="launcher-card-icon"><CheckCircle2 size={20} /></span>
+        <div className="launcher-card-copy">
+          <h2>{event.title}</h2>
+          <p>{event.detail}</p>
+        </div>
+        <div className="launcher-card-actions">
+          <button className="button secondary" disabled={restarting} onClick={() => controller.setWorkspacePanel("settings")} type="button">
+            稍后重启
+          </button>
+          <button className="button primary" disabled={restarting} onClick={() => void restart()} type="button">
+            {restarting ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}
+            {restarting ? "正在重启" : "立即重启"}
+          </button>
+        </div>
+      </section>
+      {restartError ? <StatusMessage tone="error">{restartError}</StatusMessage> : null}
+    </section>
+  );
+}
+
+function LauncherUpdateFailed({
+  event,
+  onBack
+}: {
+  event: LauncherUpdateEvent;
+  onBack: () => void;
+}) {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const summary = event.message ?? event.detail;
+  const rawDetail = event.detail && event.detail !== summary ? event.detail : null;
+
+  const copyDetail = async () => {
+    try {
+      await navigator.clipboard.writeText([event.title, summary, rawDetail].filter(Boolean).join("\n"));
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  };
+
+  return (
+    <section className="console-view maintenance-view launcher-view">
+      <button className="back-button" onClick={onBack} type="button"><ArrowLeft size={15} />返回设置</button>
+      <section aria-label="启动器更新结果" className="launcher-card error">
+        <span aria-hidden="true" className="launcher-card-icon"><CircleAlert size={20} /></span>
+        <div className="launcher-card-copy">
+          <h2>{event.title}</h2>
+          <p>{summary}</p>
+        </div>
+        <div className="launcher-card-actions">
+          {rawDetail ? (
+            <button className="button secondary" onClick={() => void copyDetail()} type="button">
+              <Copy size={15} />复制错误详情
+            </button>
+          ) : null}
+        </div>
+      </section>
+      {copyState === "copied" ? <StatusMessage tone="success">已复制，可粘贴到反馈中</StatusMessage> : null}
+      {copyState === "failed" ? <StatusMessage tone="error">复制失败，请截图反馈</StatusMessage> : null}
     </section>
   );
 }

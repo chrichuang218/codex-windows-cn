@@ -677,19 +677,21 @@ pub fn launcher_update_event_from_msg(msg: LauncherUpdateMsg) -> LauncherUpdateE
             progress,
             message: None,
         },
-        LauncherUpdateMsg::Done => LauncherUpdateEvent {
+        LauncherUpdateMsg::Done { version } => LauncherUpdateEvent {
             kind: LauncherUpdateEventKind::Done,
             title: "自更新完成".into(),
-            detail: "启动器已更新，重启后生效".into(),
+            detail: format!("已更新到 v{version}，重启后生效"),
             progress: Some(1.0),
             message: None,
         },
-        LauncherUpdateMsg::Error(message) => LauncherUpdateEvent {
+        // `message` is the short Chinese summary shown in the UI; `detail`
+        // keeps the raw error so the user can copy it into a report.
+        LauncherUpdateMsg::Error(raw) => LauncherUpdateEvent {
             kind: LauncherUpdateEventKind::Error,
             title: "自更新失败".into(),
-            detail: String::new(),
+            message: Some(launcher_apply_error_message(&raw)),
+            detail: raw,
             progress: None,
-            message: Some(message),
         },
     }
 }
@@ -1060,6 +1062,26 @@ fn launcher_error_message(message: &str) -> String {
         return "GitHub 暂时限制了未登录接口请求，稍后会自动重试。".into();
     }
     message.into()
+}
+
+fn launcher_apply_error_message(raw: &str) -> String {
+    if is_github_rate_limit_error(raw) {
+        return "GitHub 暂时限制了未登录接口请求，请稍后重试。当前版本未改动。".into();
+    }
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("sha-256 mismatch") {
+        return "下载的文件校验失败，当前版本未改动。".into();
+    }
+    if lower.contains("smoke-test") || lower.contains("--self-test") {
+        return "新版本自检未通过，当前版本未改动。".into();
+    }
+    if lower.contains("replacing running launcher") {
+        return "替换启动器文件失败，可能没有写入权限，当前版本未改动。".into();
+    }
+    if lower.contains("downloading") || lower.contains("fetching") {
+        return "下载新版本失败，请检查网络后重试。当前版本未改动。".into();
+    }
+    "自更新失败，当前版本未改动。".into()
 }
 
 fn is_github_rate_limit_error(message: &str) -> bool {

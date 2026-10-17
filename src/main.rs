@@ -36,6 +36,7 @@ static INSTALL_CANCEL: OnceLock<Mutex<Option<Arc<AtomicBool>>>> = OnceLock::new(
 static UPDATE_EVENT: OnceLock<Mutex<Option<bridge::UpdateEvent>>> = OnceLock::new();
 static LAUNCHER_UPDATE_EVENT: OnceLock<Mutex<Option<bridge::LauncherUpdateEvent>>> =
     OnceLock::new();
+static LAUNCHER_RESTART_EXE: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 static UNINSTALL_EVENT: OnceLock<Mutex<Option<UninstallEvent>>> = OnceLock::new();
 static RUNTIME_CONFIG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -590,9 +591,18 @@ fn start_launcher_update(
     if let Ok(mut current) = launcher_update_event_state().lock() {
         *current = None;
     }
+    // Captured before the swap renames the running file to `.old.exe`; after a
+    // successful update this path holds the new launcher.
+    let running_exe =
+        std::env::current_exe().map_err(|cause| format!("无法定位当前启动器：{cause}"))?;
 
     std::thread::spawn(move || {
         launcher_update::apply(&latest_version, move |msg| {
+            if matches!(msg, launcher_update::LauncherUpdateMsg::Done { .. }) {
+                if let Ok(mut restart) = launcher_restart_exe_state().lock() {
+                    *restart = Some(running_exe.clone());
+                }
+            }
             let event = bridge::launcher_update_event_from_msg(msg);
             if let Ok(mut current) = launcher_update_event_state().lock() {
                 *current = Some(event.clone());
@@ -602,6 +612,23 @@ fn start_launcher_update(
     });
 
     Ok(LauncherUpdateStart { accepted: true })
+}
+
+#[tauri::command]
+fn restart_launcher(app: tauri::AppHandle) -> Result<(), String> {
+    let exe = launcher_restart_exe_state()
+        .lock()
+        .map_err(|_| "读取重启状态失败".to_string())?
+        .clone()
+        .ok_or_else(|| "启动器尚未完成更新，无需重启".to_string())?;
+    launcher_update::spawn_restart(&exe)
+        .map_err(|cause| format!("启动新版启动器失败：{cause:#}"))?;
+    app.exit(0);
+    Ok(())
+}
+
+fn launcher_restart_exe_state() -> &'static Mutex<Option<PathBuf>> {
+    LAUNCHER_RESTART_EXE.get_or_init(|| Mutex::new(None))
 }
 
 #[tauri::command]
@@ -985,6 +1012,12 @@ fn main() {
         std::process::exit(exit_code);
     }
 
+    // After a self-update restart the old launcher may still be shutting down
+    // and holding the single-instance mutex; wait for it instead of focusing it.
+    if let Some(pid) = launcher_update::restart_after_pid(std::env::args().skip(1)) {
+        launcher_update::wait_for_process_exit(pid, Duration::from_secs(10));
+    }
+
     let Some(_single_instance_guard) = claim_single_instance_or_focus_existing() else {
         return;
     };
@@ -1021,6 +1054,7 @@ fn main() {
             check_launcher_update_status,
             apply_launcher_update_action,
             start_launcher_update,
+            restart_launcher,
             launcher_update_progress,
             uninstall_confirmation,
             uninstall_status,

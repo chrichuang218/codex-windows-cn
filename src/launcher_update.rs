@@ -12,8 +12,11 @@
 //!   4. Atomic-swap: rename running exe to `.old.exe`, move `.new.exe` into
 //!      place. Windows allows renaming a running exe; deleting it would
 //!      fail, hence the rename-then-replace dance.
-//!   5. Caller exits. The next normal launcher startup removes `.old.exe`
-//!      after the previous process has released it.
+//!   5. The running (old) launcher keeps working until the user picks
+//!      "立即重启": `spawn_restart` starts the new exe with
+//!      `--restart-after <pid>`, which waits for this process to exit before
+//!      claiming the single-instance mutex. The next startup removes
+//!      `.old.exe` once the previous process has released it.
 //!
 //! Files use a `.new.exe` / `.old.exe` suffix (rather than `.exe.new` /
 //! `.exe.old`) so Windows recognizes them as executables — the smoke-test
@@ -28,6 +31,7 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::Path;
+use std::process::Command;
 
 use crate::updater::LAUNCHER_REPO;
 
@@ -39,8 +43,11 @@ pub enum LauncherUpdateMsg {
     },
     /// Fraction in [0.0, 1.0]. `None` means indeterminate.
     Progress(Option<f32>),
-    /// Swap succeeded. Caller should prompt the user to close the launcher.
-    Done,
+    /// Swap succeeded; `version` is the launcher now on disk. The running
+    /// process is still the old build until it restarts.
+    Done {
+        version: String,
+    },
     Error(String),
 }
 
@@ -49,7 +56,9 @@ pub enum LauncherUpdateMsg {
 /// `Error` as the final message.
 pub fn apply(target_version: &str, on_msg: impl Fn(LauncherUpdateMsg) + Send + 'static) {
     match apply_inner(target_version, &on_msg) {
-        Ok(()) => on_msg(LauncherUpdateMsg::Done),
+        Ok(()) => on_msg(LauncherUpdateMsg::Done {
+            version: target_version.to_string(),
+        }),
         Err(e) => on_msg(LauncherUpdateMsg::Error(format!("{e:#}"))),
     }
 }
@@ -79,7 +88,7 @@ fn apply_inner(target_version: &str, on_msg: &dyn Fn(LauncherUpdateMsg)) -> Resu
 
     on_msg(LauncherUpdateMsg::Phase {
         phase: "Downloading launcher".into(),
-        detail: tag.clone(),
+        detail: format!("下载 {tag}"),
     });
     on_msg(LauncherUpdateMsg::Progress(Some(0.0)));
 
@@ -93,7 +102,7 @@ fn apply_inner(target_version: &str, on_msg: &dyn Fn(LauncherUpdateMsg)) -> Resu
 
     on_msg(LauncherUpdateMsg::Phase {
         phase: "Verifying".into(),
-        detail: "checking SHA-256".into(),
+        detail: "核对发布页提供的 SHA-256 校验值".into(),
     });
     on_msg(LauncherUpdateMsg::Progress(None));
 
@@ -110,7 +119,7 @@ fn apply_inner(target_version: &str, on_msg: &dyn Fn(LauncherUpdateMsg)) -> Resu
 
     on_msg(LauncherUpdateMsg::Phase {
         phase: "Smoke-testing".into(),
-        detail: "running --self-test".into(),
+        detail: "确认新版本可以正常启动".into(),
     });
     on_msg(LauncherUpdateMsg::Progress(None));
 
@@ -122,7 +131,7 @@ fn apply_inner(target_version: &str, on_msg: &dyn Fn(LauncherUpdateMsg)) -> Resu
 
     on_msg(LauncherUpdateMsg::Phase {
         phase: "Installing".into(),
-        detail: "swapping launcher".into(),
+        detail: "替换启动器文件".into(),
     });
     on_msg(LauncherUpdateMsg::Progress(None));
 
@@ -293,6 +302,51 @@ fn wide(p: &Path) -> Vec<u16> {
         .collect()
 }
 
+/// Flag passed to the freshly installed launcher so it waits for the old
+/// process to exit before claiming the single-instance mutex.
+pub const RESTART_AFTER_FLAG: &str = "--restart-after";
+
+/// Start `exe` (the path the old launcher was running from, now holding the
+/// new build) and ask it to wait for the current process to exit.
+pub fn spawn_restart(exe: &Path) -> Result<()> {
+    Command::new(exe)
+        .arg(RESTART_AFTER_FLAG)
+        .arg(std::process::id().to_string())
+        .spawn()
+        .with_context(|| format!("starting {}", exe.display()))?;
+    Ok(())
+}
+
+/// Read the pid from `--restart-after <pid>` anywhere in `args`.
+pub fn restart_after_pid(args: impl IntoIterator<Item = String>) -> Option<u32> {
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == RESTART_AFTER_FLAG {
+            return args.next().and_then(|pid| pid.parse().ok());
+        }
+    }
+    None
+}
+
+/// Block until process `pid` exits or `timeout` elapses. Returns true when the
+/// process is gone (including when it had already exited or cannot be opened).
+pub fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+    };
+
+    let Ok(handle) = (unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) }) else {
+        return true;
+    };
+    let millis = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+    let result = unsafe { WaitForSingleObject(handle, millis) };
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
+    result == WAIT_OBJECT_0
+}
+
 /// Best-effort cleanup for launcher artifacts left by a previous update.
 pub fn cleanup_stale_launchers(dir: &Path) {
     for name in ["codex-launcher.new.exe", "codex-launcher.old.exe"] {
@@ -311,7 +365,49 @@ pub fn cleanup_stale_launchers(dir: &Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::cleanup_stale_launchers;
+    use super::{cleanup_stale_launchers, restart_after_pid, wait_for_process_exit};
+    use std::time::Duration;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn restart_flag_yields_the_previous_launcher_pid() {
+        assert_eq!(
+            restart_after_pid(args(&["--restart-after", "4242"])),
+            Some(4242)
+        );
+        assert_eq!(restart_after_pid(args(&["--restart-after"])), None);
+        assert_eq!(restart_after_pid(args(&["--restart-after", "abc"])), None);
+        assert_eq!(restart_after_pid(args(&["--launch-latest"])), None);
+    }
+
+    #[test]
+    fn waits_until_the_previous_launcher_exits() {
+        let child = std::process::Command::new("cmd")
+            .args(["/C", "ping -n 2 127.0.0.1 >nul"])
+            .spawn()
+            .expect("spawn helper process");
+        let pid = child.id();
+
+        assert!(wait_for_process_exit(pid, Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn stops_waiting_after_the_timeout() {
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "ping -n 6 127.0.0.1 >nul"])
+            .spawn()
+            .expect("spawn helper process");
+
+        assert!(!wait_for_process_exit(
+            child.id(),
+            Duration::from_millis(100)
+        ));
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 
     #[test]
     fn startup_cleanup_removes_new_and_old_launcher_artifacts() {
