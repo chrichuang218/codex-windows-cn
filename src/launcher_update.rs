@@ -385,13 +385,13 @@ mod tests {
 
     #[test]
     fn waits_until_the_previous_launcher_exits() {
-        let child = std::process::Command::new("cmd")
+        let mut child = std::process::Command::new("cmd")
             .args(["/C", "ping -n 2 127.0.0.1 >nul"])
             .spawn()
             .expect("spawn helper process");
-        let pid = child.id();
 
-        assert!(wait_for_process_exit(pid, Duration::from_secs(10)));
+        assert!(wait_for_process_exit(child.id(), Duration::from_secs(10)));
+        let _ = child.wait();
     }
 
     #[test]
