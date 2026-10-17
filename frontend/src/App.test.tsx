@@ -809,6 +809,97 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(screen.queryByText(/已启动 ChatGPT/)).toBeNull();
   });
 
+  test("installer keeps rarely changed options folded under advanced", async () => {
+    let submittedFetcher = "";
+    const bridge = makeBridge({
+      installed: false,
+      startInstall: async (request) => {
+        submittedFetcher = request.fetcher;
+        return { accepted: true, cancellable: true };
+      }
+    });
+    render(<App bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("button", { name: "开始安装" }));
+    fireEvent.click(await screen.findByRole("button", { name: "下一步" }));
+    fireEvent.click(await screen.findByRole("button", { name: "下一步" }));
+
+    expect(await screen.findByRole("heading", { name: "安装选项" })).toBeVisible();
+    expect(screen.getByLabelText("当前页面")).toHaveTextContent("步骤 3 / 3");
+    expect(screen.getByRole("checkbox", { name: "写入 Windows 卸载入口" })).toBeVisible();
+    expect(screen.queryByRole("checkbox", { name: "维护 current 稳定入口" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "下载方式" })).toBeNull();
+
+    const toggle = screen.getByRole("button", { name: "高级选项" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("checkbox", { name: "维护 current 稳定入口" })).toBeVisible();
+    fireEvent.change(screen.getByRole("combobox", { name: "下载方式" }), {
+      target: { value: "winget" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "安装" }));
+    await waitFor(() => expect(submittedFetcher).toBe("winget"));
+  });
+
+  test("installer error screen copies the failure details", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const bridge = makeBridge({
+      installed: false,
+      startInstall: async () => {
+        throw new Error("Store 返回 503");
+      }
+    });
+    render(<App bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("button", { name: "开始安装" }));
+    fireEvent.click(await screen.findByRole("button", { name: "下一步" }));
+    fireEvent.click(await screen.findByRole("button", { name: "下一步" }));
+    fireEvent.click(await screen.findByRole("button", { name: "安装" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "复制错误详情" }));
+    expect(await screen.findByText("已复制，可粘贴到反馈中")).toBeVisible();
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Store 返回 503"));
+  });
+
+  test("installed shell marks available updates in amber and shows the assistant version", async () => {
+    render(<App bridge={makeBridge({ installed: true })} />);
+
+    const headerStatus = await screen.findByText("有可用更新");
+    expect(headerStatus.querySelector(".status-dot")).toHaveClass("available");
+    expect(await screen.findByTitle("中文助手版本")).toHaveTextContent("v0.1.2");
+    expect(screen.queryByTitle("官方 Microsoft Store 分发")).toBeNull();
+  });
+
+  test("version rows explain why a version cannot be deleted", async () => {
+    const bridge = makeBridge({
+      installed: true,
+      getVersionInventory: async () => ({
+        ...versionInventory,
+        runningVersions: ["1.0.0"],
+        versions: versionInventory.versions.map((item) =>
+          item.version === "1.0.0" ? { ...item, isRunning: true, canDelete: false } : item
+        )
+      })
+    });
+    render(<App bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("button", { name: "版本" }));
+
+    expect(await screen.findByText("运行中的版本不可删除")).toBeVisible();
+    expect(screen.getAllByText(/不可删除/)).toHaveLength(1);
+  });
+
+  test("uninstall page shows a confirmation card with what is removed and kept", async () => {
+    render(<App bridge={makeBridge({ installed: true })} />);
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+    fireEvent.click(await screen.findByRole("button", { name: /卸载助手/ }));
+
+    const card = await screen.findByLabelText("卸载确认");
+    expect(card).toHaveTextContent("将删除");
+    expect(card).toHaveTextContent("将保留");
+    expect(card).toContainElement(screen.getByRole("button", { name: "确认卸载" }));
+    expect(screen.queryByText("卸载", { selector: ".section-label" })).toBeNull();
+  });
+
   test("version inventory launches a retained historical version without changing the default target", async () => {
     const launchRequests: LaunchRequest[] = [];
     const bridge = makeBridge({

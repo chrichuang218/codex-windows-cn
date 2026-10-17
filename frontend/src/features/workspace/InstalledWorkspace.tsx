@@ -275,9 +275,13 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
             onClick={() => setWorkspacePanel("settings")}
           />
         </nav>
-        <div className="rail-status" title="官方 Microsoft Store 分发">
-          <ShieldCheck size={16} />
-        </div>
+        {controller.launcherUpdateStatus.currentVersion ? (
+          <div className="rail-version" title="中文助手版本">
+            v{controller.launcherUpdateStatus.currentVersion}
+          </div>
+        ) : (
+          <span />
+        )}
       </aside>
 
       <section className="console-workspace">
@@ -288,7 +292,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
           </div>
           {updateStatus.kind === "available" || updateStatus.kind === "error" ? (
             <div className="header-status">
-              <span className={updateStatus.kind === "error" ? "status-dot error" : "status-dot"} />
+              <span className={`status-dot ${updateStatus.kind}`} />
               {updateStatus.kind === "available" ? "有可用更新" : updateStatus.title}
             </div>
           ) : null}
@@ -614,6 +618,11 @@ function VersionsPanel({
             <div className="version-identity">
               <strong>{item.version}</strong>
               <span>{item.productName}</span>
+              {!item.canDelete ? (
+                <small className="version-note">
+                  {item.isRunning ? "运行中的版本不可删除" : "当前版本不可删除"}
+                </small>
+              ) : null}
             </div>
             <div className="version-meta">
               <span>{formatBytes(item.sizeBytes)}</span>
@@ -1004,19 +1013,29 @@ function UninstallPanel({ controller }: { controller: ReadyAppController }) {
     );
   }
 
+  const ready = uninstallStatus.kind === "ready";
+
   return (
-    <section className="console-view maintenance-view">
+    <section className="console-view maintenance-view launcher-view">
       <button className="back-button" onClick={() => setWorkspacePanel("settings")} type="button"><ArrowLeft size={15} />返回设置</button>
-      <span className="section-label">卸载</span>
-      <h2>{uninstallConfirmation.title}</h2>
-      <p>{uninstallStatus.message}</p>
-      <div className="uninstall-grid">
-        <div><strong>将删除</strong>{uninstallConfirmation.deleteItems.map((item) => <span key={item}>{item}</span>)}</div>
-        <div><strong>将保留</strong>{uninstallConfirmation.preserveItems.map((item) => <span key={item}>{item}</span>)}</div>
-      </div>
-      <button className="button danger" disabled={uninstallStatus.kind !== "ready"} onClick={startUninstall} type="button">
-        <Trash2 size={15} />确认卸载
-      </button>
+      <section aria-label="卸载确认" className={`launcher-card uninstall-card ${ready ? "danger" : "error"}`}>
+        <span aria-hidden="true" className="launcher-card-icon">
+          {ready ? <Trash2 size={20} /> : <CircleAlert size={20} />}
+        </span>
+        <div className="launcher-card-copy">
+          <h2>{uninstallConfirmation.title}</h2>
+          <p>{uninstallStatus.message}</p>
+        </div>
+        <div className="uninstall-grid">
+          <div><strong>将删除</strong>{uninstallConfirmation.deleteItems.map((item) => <span key={item}>{item}</span>)}</div>
+          <div><strong>将保留</strong>{uninstallConfirmation.preserveItems.map((item) => <span key={item}>{item}</span>)}</div>
+        </div>
+        <div className="launcher-card-actions uninstall-card-actions">
+          <button className="button danger" disabled={!ready} onClick={startUninstall} type="button">
+            <Trash2 size={15} />确认卸载
+          </button>
+        </div>
+      </section>
       {uninstallMessage ? <StatusMessage tone="error">{uninstallMessage}</StatusMessage> : null}
     </section>
   );

@@ -230,20 +230,6 @@ button {
   text-align: center;
 }
 
-.workspace-screen {
-  gap: 10px;
-}
-
-.update-screen {
-  grid-template-rows: auto auto auto minmax(0, auto) auto auto 1fr;
-  gap: 7px;
-}
-
-.update-copy {
-  display: grid;
-  gap: 5px;
-}
-
 .eyebrow {
   margin: 0;
   color: var(--accent);
@@ -431,13 +417,6 @@ a:hover {
   font-size: 11px;
 }
 
-.footer-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
 .progress-track {
   width: 100%;
   height: 9px;
@@ -495,51 +474,6 @@ a:hover {
   color: var(--danger);
 }
 
-.action-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-
-.version-compare {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.version-compare div {
-  display: grid;
-  gap: 5px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.035);
-}
-
-.version-compare span {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.version-compare strong {
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 800;
-  overflow-wrap: anywhere;
-}
-
-.version-compare div:nth-child(2) strong {
-  color: var(--success);
-}
-
-.launch-note {
-  margin: -1px 0 0;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
 .inline-progress {
   display: grid;
   gap: 7px;
@@ -558,16 +492,14 @@ a:hover {
   font-size: 12px;
 }
 
-.inline-progress strong,
-.uninstall-columns strong {
+.inline-progress strong {
   color: var(--text);
   font-size: 12px;
   font-weight: 800;
 }
 
 .inline-status,
-.inline-progress span,
-.uninstall-columns span {
+.inline-progress span {
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -575,24 +507,6 @@ a:hover {
 .inline-status {
   max-width: 100%;
   overflow-wrap: anywhere;
-}
-
-.uninstall-columns {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  min-height: 0;
-}
-
-.uninstall-columns div {
-  display: grid;
-  align-content: start;
-  gap: 6px;
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 9px 10px;
-  background: rgba(255, 255, 255, 0.035);
 }
 
 .notice {
@@ -616,99 +530,6 @@ a:hover {
   margin-bottom: 0;
 }
 
-.splash-frame {
-  display: grid;
-  place-items: center;
-  align-content: center;
-  justify-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  background:
-    linear-gradient(180deg, rgba(118, 220, 205, 0.06), transparent 38%),
-    var(--bg);
-}
-
-.codex-splash-mark {
-  position: relative;
-  width: 58px;
-  height: 58px;
-  margin-bottom: 9px;
-  border: 1px solid rgba(118, 220, 205, 0.24);
-  border-radius: 10px;
-  background:
-    linear-gradient(135deg, rgba(118, 220, 205, 0.95), rgba(232, 189, 105, 0.72));
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
-}
-
-.mark-chevron,
-.mark-line {
-  position: absolute;
-  z-index: 1;
-  display: block;
-  background: var(--bg-deep);
-}
-
-.mark-chevron::before,
-.mark-chevron::after {
-  position: absolute;
-  content: "";
-  width: 5px;
-  height: 24px;
-  border-radius: 999px;
-  background: var(--bg-deep);
-}
-
-.mark-chevron::before {
-  top: 19px;
-  left: 17px;
-  transform: rotate(-32deg);
-}
-
-.mark-chevron::after {
-  top: 19px;
-  left: 17px;
-  transform: rotate(32deg);
-}
-
-.mark-line {
-  top: 36px;
-  left: 33px;
-  width: 16px;
-  height: 5px;
-}
-
-.splash-frame h1 {
-  margin: 0;
-  color: var(--text);
-  font-size: 15px;
-  font-weight: 800;
-}
-
-.splash-frame p {
-  margin: 1px 0 10px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.splash-progress {
-  width: 238px;
-  height: 7px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.splash-progress div {
-  width: 58%;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--warning), var(--accent));
-  animation: splash-progress 1.35s ease-in-out infinite alternate;
-}
-
 @keyframes progress-sweep {
   0% {
     margin-left: -36%;
@@ -716,16 +537,6 @@ a:hover {
 
   100% {
     margin-left: 102%;
-  }
-}
-
-@keyframes splash-progress {
-  0% {
-    width: 38%;
-  }
-
-  100% {
-    width: 62%;
   }
 }
 
@@ -807,13 +618,14 @@ a:hover {
   color: var(--console-mint);
 }
 
-.rail-status {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  margin: 0 auto;
-  color: var(--console-lime);
+.rail-version {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .console-workspace {
@@ -867,6 +679,11 @@ a:hover {
   border-radius: 50%;
   background: var(--console-lime);
   box-shadow: 0 0 0 4px rgba(185, 231, 115, 0.1);
+}
+
+.status-dot.available {
+  background: var(--warning);
+  box-shadow: 0 0 0 4px rgba(239, 189, 99, 0.12);
 }
 
 .status-dot.error {
@@ -1166,17 +983,6 @@ a:focus-visible {
   color: var(--console-mint);
 }
 
-.inline-message {
-  margin: 0;
-  color: var(--console-mint);
-  font-size: 12px;
-}
-
-.inline-message.success {
-  color: var(--console-lime);
-}
-
-.inline-message.error,
 .empty-state.error {
   color: var(--console-coral);
 }
@@ -1563,35 +1369,6 @@ a:focus-visible {
   font-size: 12px;
 }
 
-.uninstall-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.uninstall-grid > div {
-  display: grid;
-  align-content: start;
-  gap: 6px;
-  border-top: 2px solid var(--console-line-strong);
-  padding: 11px 2px;
-}
-
-.uninstall-grid strong {
-  font-size: 12px;
-}
-
-.uninstall-grid span {
-  color: var(--console-muted);
-  font-size: 11px;
-}
-
-.maintenance-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .modal-backdrop {
   position: fixed;
   z-index: 50;
@@ -1776,8 +1553,11 @@ a:focus-visible {
 }
 
 .update-band > div:first-child { flex: 1; min-width: 0; }
+
 .update-check-progress { width: 100%; max-width: 360px; height: 7px; border: 0; margin-top: 8px; }
+
 @media (max-width: 620px) { .update-band { flex-wrap: wrap; } }
+
 @media (prefers-reduced-motion: reduce) { .update-check-progress div { animation: none; } }
 
 .status-message {
@@ -1968,4 +1748,105 @@ a:focus-visible {
     grid-column: 1 / -1;
     justify-content: flex-start;
   }
+}
+
+.version-note {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.launcher-card.danger .launcher-card-icon {
+  color: var(--danger);
+  background: rgba(255, 127, 145, 0.1);
+}
+
+.uninstall-grid {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.uninstall-grid > div {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.uninstall-grid strong {
+  font-size: 12px;
+}
+
+.uninstall-grid span {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.uninstall-card-actions {
+  grid-column: 1 / -1;
+}
+
+.installer-advanced {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 5px;
+  border: 0;
+  padding: 2px 0;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.advanced-toggle:hover {
+  color: var(--accent);
+}
+
+.advanced-toggle svg {
+  transition: transform 120ms ease;
+}
+
+.advanced-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.error-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.step-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.step-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+.step-dots i.done {
+  background: var(--accent);
+}
+
+.error-text-inline {
+  color: var(--danger);
+  font-size: 12px;
 }
