@@ -46,7 +46,7 @@ export function ProgressInline({
 }) {
   return (
     <div className="inline-progress">
-      <strong>{title}</strong>
+      <h3>{title}</h3>
       {detail ? <span>{detail}</span> : null}
       <div
         aria-label={title}

@@ -15,7 +15,6 @@ pub mod proxy;
 pub mod registry;
 pub mod safety;
 pub mod shortcut;
-pub mod splash;
 pub mod store;
 pub mod uninstall;
 pub mod updater;

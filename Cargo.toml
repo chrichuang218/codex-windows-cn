@@ -1,6 +1,6 @@
 [package]
 name = "codex-windows-cn"
-version = "0.1.19"
+version = "0.1.20"
 edition = "2021"
 rust-version = "1.80"
 description = "Codex Windows Chinese installer, updater, launcher and uninstaller assistant"
@@ -17,7 +17,7 @@ serde_json = "1"
 anyhow = "1"
 thiserror = "2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-native-roots", "json"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 percent-encoding = "2"
 directories = "5"
 quick-xml = "0.41"

@@ -273,6 +273,7 @@ export type AppBridge = {
   checkLauncherUpdateStatus: (manual?: boolean) => Promise<LauncherUpdateStatus>;
   startLauncherUpdate: (latestVersion: string) => Promise<LauncherUpdateStart>;
   getLauncherUpdateProgress: () => Promise<LauncherUpdateEvent | null>;
+  restartLauncher: () => Promise<void>;
   applyLauncherUpdateAction: (
     action: LauncherUpdateAction,
     latestVersion: string
@@ -676,6 +677,13 @@ export const tauriBridge: AppBridge = {
     }
 
     return invoke<LauncherUpdateEvent | null>("launcher_update_progress");
+  },
+  restartLauncher: () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve();
+    }
+
+    return invoke<void>("restart_launcher");
   },
   applyLauncherUpdateAction: (action, latestVersion) => {
     if (!("__TAURI_INTERNALS__" in window)) {

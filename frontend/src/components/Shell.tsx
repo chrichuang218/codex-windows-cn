@@ -8,6 +8,7 @@ type ProductShellProps = {
   modeLabel: string;
   productName: string;
   stageLabel: string;
+  stageStep?: { current: number; total: number };
   title: string;
 };
 
@@ -18,6 +19,7 @@ export function ProductShell({
   modeLabel,
   productName,
   stageLabel,
+  stageStep,
   title
 }: ProductShellProps) {
   return (
@@ -29,7 +31,16 @@ export function ProductShell({
               <h1>{productName}</h1>
               <p>{modeLabel || title}</p>
             </div>
-            <span aria-label="当前页面">{stageLabel}</span>
+            <span aria-label="当前页面">
+              {stageStep ? (
+                <span aria-hidden="true" className="step-dots">
+                  {Array.from({ length: stageStep.total }, (_, index) => (
+                    <i className={index < stageStep.current ? "done" : undefined} key={index} />
+                  ))}
+                </span>
+              ) : null}
+              {stageLabel}
+            </span>
           </header>
           <div className="divider" />
           <div className={bodyClassName ? `window-body ${bodyClassName}` : "window-body"}>
@@ -47,7 +58,7 @@ export function LoadingSplash() {
     <ProductShell
       bodyClassName="boot-body"
       footer={<span className="footer-note">官方 Microsoft Store 分发</span>}
-      modeLabel="安装向导"
+      modeLabel="中文安装更新助手"
       productName="Codex Windows 中文助手"
       stageLabel="正在加载"
       title="正在启动 Codex Windows 中文助手"

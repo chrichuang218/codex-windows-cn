@@ -10,22 +10,31 @@
       #root {
         margin: 0;
         min-height: 100vh;
-        background: #181a17;
+        background: #111516;
       }
 
       #root {
-        color: #f4f1e8;
-        font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+        color: #f2f5f3;
+        font-family:
+          "Segoe UI Variable Text",
+          "Microsoft YaHei UI",
+          "Microsoft YaHei",
+          "Segoe UI",
+          system-ui,
+          sans-serif;
+        line-height: 1.35;
+      }
+
+      .preboot-shell,
+      .preboot-shell * {
+        box-sizing: border-box;
       }
 
       .preboot-shell {
-        box-sizing: border-box;
         display: grid;
         min-height: 100vh;
         padding: 22px 28px 18px;
-        background:
-          linear-gradient(145deg, rgba(232, 189, 105, 0.025), transparent 42%),
-          #181a17;
+        background: #111516;
       }
 
       .preboot-panel {
@@ -53,8 +62,8 @@
       .preboot-main p,
       .preboot-main span {
         margin: 0;
-        color: #9f9d91;
-        font-size: 11px;
+        color: #8a9693;
+        font-size: 12px;
       }
 
       .preboot-header p {
@@ -62,14 +71,19 @@
       }
 
       .preboot-header span {
-        font-size: 10px;
+        font-size: 11px;
         font-weight: 700;
+      }
+
+      .preboot-main span {
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
       }
 
       .preboot-divider {
         height: 1px;
         margin-top: 10px;
-        background: rgba(233, 231, 218, 0.13);
+        background: rgba(231, 238, 236, 0.11);
       }
 
       .preboot-main {
@@ -92,11 +106,11 @@
         height: 42px;
         place-items: center;
         overflow: hidden;
-        border: 1px solid rgba(115, 210, 198, 0.55);
+        border: 1px solid rgba(118, 220, 205, 0.55);
         border-radius: 10px;
         padding: 2px;
-        background: rgba(115, 210, 198, 0.08);
-        box-shadow: 0 10px 28px rgba(115, 210, 198, 0.14);
+        background: rgba(118, 220, 205, 0.08);
+        box-shadow: 0 10px 28px rgba(118, 220, 205, 0.14);
       }
 
       .preboot-mark img {
@@ -119,16 +133,19 @@
         width: 34%;
         height: 100%;
         border-radius: inherit;
-        background: linear-gradient(90deg, #d7c87a, #66d1c7);
+        background: linear-gradient(90deg, #efbd63, #76dccd);
         animation: preboot-sweep 1.1s ease-in-out infinite;
       }
 
       .preboot-footer {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
         min-height: 34px;
-        border-top: 1px solid rgba(233, 231, 218, 0.13);
+        border-top: 1px solid rgba(231, 238, 236, 0.11);
         padding-top: 10px;
-        color: #68675f;
-        font-size: 10px;
+        color: #6b7774;
+        font-size: 11px;
       }
 
       @keyframes preboot-sweep {
@@ -149,7 +166,7 @@
           <header class="preboot-header">
             <div>
               <h1>Codex Windows 中文助手</h1>
-              <p>安装向导</p>
+              <p>中文安装更新助手</p>
             </div>
             <span>正在加载</span>
           </header>

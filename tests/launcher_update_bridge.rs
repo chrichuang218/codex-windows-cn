@@ -105,7 +105,7 @@ fn launcher_skipped_reason_becomes_short_chinese_status() {
 fn launcher_update_worker_messages_are_reported_as_chinese_events() {
     let event = launcher_update_event_from_msg(LauncherUpdateMsg::Phase {
         phase: "Verifying".into(),
-        detail: "checking SHA-256".into(),
+        detail: "核对发布页提供的 SHA-256 校验值".into(),
     });
 
     assert_eq!(
@@ -113,16 +113,53 @@ fn launcher_update_worker_messages_are_reported_as_chinese_events() {
         LauncherUpdateEvent {
             kind: LauncherUpdateEventKind::Phase,
             title: "正在校验 SHA-256".into(),
-            detail: "checking SHA-256".into(),
+            detail: "核对发布页提供的 SHA-256 校验值".into(),
             progress: None,
             message: None,
         }
     );
 
-    let done = launcher_update_event_from_msg(LauncherUpdateMsg::Done);
+    let done = launcher_update_event_from_msg(LauncherUpdateMsg::Done {
+        version: "0.2.0".into(),
+    });
     assert_eq!(done.kind, LauncherUpdateEventKind::Done);
     assert_eq!(done.title, "自更新完成");
+    assert_eq!(done.detail, "已更新到 v0.2.0，重启后生效");
     assert_eq!(done.progress, Some(1.0));
+}
+
+#[test]
+fn launcher_update_errors_show_chinese_summary_and_keep_raw_detail() {
+    let cases = [
+        (
+            "SHA-256 mismatch: expected aa, got bb. Aborting; running launcher untouched.",
+            "下载的文件校验失败，当前版本未改动。",
+        ),
+        (
+            "smoke-test failed: new launcher exited with exit code: 1",
+            "新版本自检未通过，当前版本未改动。",
+        ),
+        (
+            "replacing running launcher: moving a → b: Access is denied.",
+            "替换启动器文件失败，可能没有写入权限，当前版本未改动。",
+        ),
+        (
+            "downloading https://github.com/x/codex-launcher.exe: error sending request",
+            "下载新版本失败，请检查网络后重试。当前版本未改动。",
+        ),
+        (
+            "fetching sha: HTTP status client error (403 Forbidden): API rate limit exceeded",
+            "GitHub 暂时限制了未登录接口请求，请稍后重试。当前版本未改动。",
+        ),
+        ("something unexpected", "自更新失败，当前版本未改动。"),
+    ];
+
+    for (raw, summary) in cases {
+        let event = launcher_update_event_from_msg(LauncherUpdateMsg::Error(raw.into()));
+        assert_eq!(event.kind, LauncherUpdateEventKind::Error);
+        assert_eq!(event.message.as_deref(), Some(summary), "raw: {raw}");
+        assert_eq!(event.detail, raw);
+    }
 }
 
 #[test]

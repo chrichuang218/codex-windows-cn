@@ -52,7 +52,7 @@ pub fn extract_app(
     let mut total_app_entries: u64 = 0;
     for i in 0..zip.len() {
         let entry = zip.by_index(i)?;
-        if entry.name().starts_with(APP_PREFIX) && !entry.is_dir() {
+        if entry.name()?.starts_with(APP_PREFIX) && !entry.is_dir() {
             total_app_entries += 1;
         }
     }
@@ -69,7 +69,7 @@ pub fn extract_app(
 
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i)?;
-        let name = entry.name().to_string();
+        let name = entry.name()?.to_string();
         if !name.starts_with(APP_PREFIX) {
             continue;
         }
