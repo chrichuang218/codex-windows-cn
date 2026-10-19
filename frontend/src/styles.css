@@ -474,32 +474,7 @@ a:hover {
   color: var(--danger);
 }
 
-.inline-progress {
-  display: grid;
-  gap: 7px;
-  width: 100%;
-  padding-top: 2px;
-}
-
-.inline-progress h3 {
-  margin: 0;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.inline-progress > span:not(.progress-meta) {
-  color: var(--text-soft);
-  font-size: 12px;
-}
-
-.inline-progress strong {
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.inline-status,
-.inline-progress span {
+.inline-status {
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -1475,6 +1450,15 @@ a:focus-visible {
 }
 
 @media (max-width: 760px) {
+  .launch-hero {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .update-band {
+    flex-wrap: wrap;
+  }
+
   .header-status {
     max-width: 180px;
   }
@@ -1522,8 +1506,6 @@ a:focus-visible {
 .update-band > div:first-child { flex: 1; min-width: 0; }
 
 .update-check-progress { width: 100%; max-width: 360px; height: 7px; border: 0; margin-top: 8px; }
-
-@media (max-width: 620px) { .update-band { flex-wrap: wrap; } }
 
 @media (prefers-reduced-motion: reduce) { .update-check-progress div { animation: none; } }
 
@@ -1617,16 +1599,6 @@ a:focus-visible {
 .defer-row .defer-menu button:focus-visible {
   color: var(--text);
   background: var(--panel-raised);
-}
-
-.update-band-progress {
-  display: block;
-  padding-block: 12px;
-}
-
-.update-band-progress .progress-track {
-  max-width: 420px;
-  height: 7px;
 }
 
 .launcher-view {
@@ -1821,15 +1793,4 @@ a:focus-visible {
 .console-content > .center-screen {
   min-height: 300px;
   padding: 24px 28px;
-}
-
-@media (max-width: 760px) {
-  .launch-hero {
-    flex-wrap: wrap;
-    gap: 16px;
-  }
-
-  .update-band {
-    flex-wrap: wrap;
-  }
 }
