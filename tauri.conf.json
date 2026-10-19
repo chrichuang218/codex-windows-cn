@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "Codex Windows 中文助手",
-        "width": 760,
-        "height": 520,
+        "width": 820,
+        "height": 580,
         "minWidth": 720,
         "minHeight": 520,
         "center": true,

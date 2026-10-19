@@ -438,7 +438,7 @@ function OverviewPanel({
             <strong>当前仍运行历史版本 {runningVersion}</strong>
             <span>最新版 {defaultVersion} 已就绪</span>
           </div>
-          <button className="button secondary" disabled={busy || updating} onClick={onSwitchLatest} type="button">
+          <button className="button secondary" disabled={busy} onClick={onSwitchLatest} type="button">
             <RefreshCw size={15} />
             切换到最新版
           </button>
@@ -453,7 +453,7 @@ function OverviewPanel({
         </div>
         <button
           className="launch-button"
-          disabled={!defaultVersion || busy || updating}
+          disabled={!defaultVersion || busy}
           onClick={onLaunch}
           type="button"
         >
@@ -501,7 +501,7 @@ function OverviewPanel({
         </div>
       </div>
 
-      {!updating && !checking && deferActions.length > 0 ? (
+      {!checking && deferActions.length > 0 ? (
         <DeferActions actions={deferActions} labels={updateActionLabels} onSelect={applyUpdateAction} />
       ) : null}
 

@@ -474,32 +474,7 @@ a:hover {
   color: var(--danger);
 }
 
-.inline-progress {
-  display: grid;
-  gap: 7px;
-  width: 100%;
-  padding-top: 2px;
-}
-
-.inline-progress h3 {
-  margin: 0;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.inline-progress > span:not(.progress-meta) {
-  color: var(--text-soft);
-  font-size: 12px;
-}
-
-.inline-progress strong {
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.inline-status,
-.inline-progress span {
+.inline-status {
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -703,7 +678,7 @@ a:hover {
   align-content: start;
   gap: 18px;
   min-height: 100%;
-  padding: 24px 18px 28px;
+  padding: 24px 18px 20px;
 }
 
 .version-alert {
@@ -737,12 +712,12 @@ a:hover {
   align-items: center;
   justify-content: space-between;
   gap: 26px;
-  min-height: 126px;
   border-bottom: 1px solid var(--console-line);
   padding: 4px 2px 22px;
 }
 
 .launch-copy {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -770,10 +745,12 @@ a:hover {
   margin: 0;
   color: var(--console-muted);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .launch-button {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   gap: 9px;
@@ -1475,6 +1452,14 @@ a:focus-visible {
 }
 
 @media (max-width: 760px) {
+  .launch-hero {
+    gap: 16px;
+  }
+
+  .update-band {
+    flex-wrap: wrap;
+  }
+
   .header-status {
     max-width: 180px;
   }
@@ -1505,6 +1490,12 @@ a:focus-visible {
   }
 }
 
+@media (max-width: 520px) {
+  .launch-hero {
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-width: 620px) {
   .strategy-row {
     grid-template-columns: minmax(0, 1fr);
@@ -1522,8 +1513,6 @@ a:focus-visible {
 .update-band > div:first-child { flex: 1; min-width: 0; }
 
 .update-check-progress { width: 100%; max-width: 360px; height: 7px; border: 0; margin-top: 8px; }
-
-@media (max-width: 620px) { .update-band { flex-wrap: wrap; } }
 
 @media (prefers-reduced-motion: reduce) { .update-check-progress div { animation: none; } }
 
@@ -1617,16 +1606,6 @@ a:focus-visible {
 .defer-row .defer-menu button:focus-visible {
   color: var(--text);
   background: var(--panel-raised);
-}
-
-.update-band-progress {
-  display: block;
-  padding-block: 12px;
-}
-
-.update-band-progress .progress-track {
-  max-width: 420px;
-  height: 7px;
 }
 
 .launcher-view {
@@ -1821,15 +1800,4 @@ a:focus-visible {
 .console-content > .center-screen {
   min-height: 300px;
   padding: 24px 28px;
-}
-
-@media (max-width: 760px) {
-  .launch-hero {
-    flex-wrap: wrap;
-    gap: 16px;
-  }
-
-  .update-band {
-    flex-wrap: wrap;
-  }
 }
