@@ -1490,6 +1490,12 @@ a:focus-visible {
   }
 }
 
+@media (max-width: 520px) {
+  .launch-hero {
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-width: 620px) {
   .strategy-row {
     grid-template-columns: minmax(0, 1fr);
