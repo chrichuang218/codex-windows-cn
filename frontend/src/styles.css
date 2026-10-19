@@ -718,6 +718,7 @@ a:hover {
 }
 
 .launch-copy {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -745,10 +746,12 @@ a:hover {
   margin: 0;
   color: var(--console-muted);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .launch-button {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   gap: 9px;
@@ -1451,7 +1454,6 @@ a:focus-visible {
 
 @media (max-width: 760px) {
   .launch-hero {
-    flex-wrap: wrap;
     gap: 16px;
   }
 
