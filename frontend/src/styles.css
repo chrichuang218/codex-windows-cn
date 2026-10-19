@@ -543,7 +543,7 @@ a:hover {
 /* Installed console */
 .console-shell {
   display: grid;
-  grid-template-columns: 78px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -558,7 +558,7 @@ a:hover {
   grid-template-rows: auto 1fr auto;
   min-height: 0;
   border-right: 1px solid var(--console-line);
-  padding: 18px 10px 14px;
+  padding: 18px 7px 14px;
   background: var(--console-rail);
 }
 
@@ -642,7 +642,7 @@ a:hover {
   gap: 24px;
   min-height: 76px;
   border-bottom: 1px solid var(--console-line);
-  padding: 14px 26px;
+  padding: 14px 18px;
   background: rgba(255, 255, 255, 0.012);
 }
 
@@ -703,7 +703,7 @@ a:hover {
   align-content: start;
   gap: 18px;
   min-height: 100%;
-  padding: 24px 28px 28px;
+  padding: 24px 18px 28px;
 }
 
 .version-alert {
@@ -801,7 +801,7 @@ a:hover {
 
 .metric-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   border: 1px solid var(--console-line);
   border-radius: 7px;
   background: var(--console-surface);
@@ -822,11 +822,11 @@ a:hover {
   border-left: 1px solid var(--console-line);
 }
 
-.metric-item:nth-child(-n + 4) {
+.metric-item:nth-child(-n + 2) {
   border-top: 0;
 }
 
-.metric-item:nth-child(4n + 1) {
+.metric-item:nth-child(2n + 1) {
   border-left: 0;
 }
 
@@ -1475,19 +1475,6 @@ a:focus-visible {
 }
 
 @media (max-width: 760px) {
-  .console-shell {
-    grid-template-columns: 64px minmax(0, 1fr);
-  }
-
-  .console-rail {
-    padding-inline: 7px;
-  }
-
-  .console-header,
-  .console-view {
-    padding-inline: 18px;
-  }
-
   .header-status {
     max-width: 180px;
   }
@@ -1498,26 +1485,6 @@ a:focus-visible {
 
   .version-meta {
     display: none;
-  }
-
-  .metric-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .metric-item:nth-child(-n + 4) {
-    border-top: 1px solid var(--console-line);
-  }
-
-  .metric-item:nth-child(-n + 2) {
-    border-top: 0;
-  }
-
-  .metric-item:nth-child(4n + 1) {
-    border-left: 1px solid var(--console-line);
-  }
-
-  .metric-item:nth-child(2n + 1) {
-    border-left: 0;
   }
 
   .settings-section {
@@ -1849,4 +1816,20 @@ a:focus-visible {
 .error-text-inline {
   color: var(--danger);
   font-size: 12px;
+}
+
+.console-content > .center-screen {
+  min-height: 300px;
+  padding: 24px 28px;
+}
+
+@media (max-width: 760px) {
+  .launch-hero {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .update-band {
+    flex-wrap: wrap;
+  }
 }

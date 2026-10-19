@@ -1443,8 +1443,8 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(screen.getByText("正在使用已配置的下载方式获取 ChatGPT 更新包。")).toBeVisible();
     expect(screen.queryByText("发现 ChatGPT 新版本")).toBeNull();
     expect(screen.queryByRole("button", { name: "稍后提醒" })).toBeNull();
-    expect(screen.getByLabelText("安装摘要")).toBeVisible();
-    expect(screen.getByRole("button", { name: "启动 ChatGPT" })).toBeDisabled();
+    expect(screen.queryByLabelText("安装摘要")).toBeNull();
+    expect(screen.queryByRole("button", { name: "启动 ChatGPT" })).toBeNull();
 
     act(() => {
       emitUpdateEvent?.({

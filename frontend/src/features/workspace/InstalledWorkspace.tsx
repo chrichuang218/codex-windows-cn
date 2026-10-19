@@ -39,7 +39,7 @@ import {
 import type { LauncherUpdateAction, UpdateAction } from "../../bridge";
 import type { ReadyAppController } from "../../useAppController";
 import { AssistantMark } from "../../components/AssistantMark";
-import { ProgressInline, ProgressScreen } from "../../components/Progress";
+import { ProgressScreen } from "../../components/Progress";
 import { StatusMessage, type Feedback } from "../../components/StatusMessage";
 
 const updateDeferActionOrder: Exclude<UpdateAction, "updateNow">[] = [
@@ -418,6 +418,17 @@ function OverviewPanel({
     updateStatus.actions.includes(action)
   );
 
+  if (updating) {
+    return (
+      <ProgressScreen
+        detail={updateEvent?.detail}
+        indeterminate={updateProgress === null}
+        progress={updateProgress}
+        title={updateEvent?.title ?? "正在准备更新"}
+      />
+    );
+  }
+
   return (
     <section className="console-view overview-view">
       {runningIsOld ? (
@@ -469,36 +480,26 @@ function OverviewPanel({
         />
       </div>
 
-      {updating && updateEvent ? (
-        <div className="update-band update-band-progress">
-          <ProgressInline
-            detail={updateEvent.detail}
-            progress={updateProgress}
-            title={updateEvent.title}
-          />
+      <div className="update-band">
+        <div>
+          <span className="section-label">官方更新</span>
+          <strong aria-live="polite">{checking ? "正在检查更新…" : updateStatus.title}</strong>
+          {checking ? <CheckProgress /> : null}
         </div>
-      ) : (
-        <div className="update-band">
-          <div>
-            <span className="section-label">官方更新</span>
-            <strong aria-live="polite">{checking ? "正在检查更新…" : updateStatus.title}</strong>
-            {checking ? <CheckProgress /> : null}
-          </div>
-          <div className="update-actions">
-            {!checking && updateStatus.actions.includes("updateNow") ? (
-              <button className="button primary" onClick={startUpdate} type="button">
-                <Download size={15} />
-                立即更新
-              </button>
-            ) : !checking && updateStatus.kind === "upToDate" ? (
-              <span className="verified-state"><CheckCircle2 size={16} /> 已同步</span>
-            ) : null}
-            <button className="button secondary" disabled={checking || updateState !== "idle"} onClick={() => void controller.checkUpdateNow()} type="button">
-              <RefreshCw size={15} />{checking ? "正在检查…" : "检查更新"}
+        <div className="update-actions">
+          {!checking && updateStatus.actions.includes("updateNow") ? (
+            <button className="button primary" onClick={startUpdate} type="button">
+              <Download size={15} />
+              立即更新
             </button>
-          </div>
+          ) : !checking && updateStatus.kind === "upToDate" ? (
+            <span className="verified-state"><CheckCircle2 size={16} /> 已同步</span>
+          ) : null}
+          <button className="button secondary" disabled={checking || updateState !== "idle"} onClick={() => void controller.checkUpdateNow()} type="button">
+            <RefreshCw size={15} />{checking ? "正在检查…" : "检查更新"}
+          </button>
         </div>
-      )}
+      </div>
 
       {!updating && !checking && deferActions.length > 0 ? (
         <DeferActions actions={deferActions} labels={updateActionLabels} onSelect={applyUpdateAction} />
