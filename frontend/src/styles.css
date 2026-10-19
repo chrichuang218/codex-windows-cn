@@ -678,7 +678,7 @@ a:hover {
   align-content: start;
   gap: 18px;
   min-height: 100%;
-  padding: 24px 18px 28px;
+  padding: 24px 18px 20px;
 }
 
 .version-alert {
@@ -712,7 +712,6 @@ a:hover {
   align-items: center;
   justify-content: space-between;
   gap: 26px;
-  min-height: 126px;
   border-bottom: 1px solid var(--console-line);
   padding: 4px 2px 22px;
 }
