@@ -11,6 +11,7 @@ use codex_windows_cn::{
     },
     config::{Config, InstallMode},
     dialogs, elevate, installer, launcher_update, mode, proxy, uninstall, updater, versions,
+    window_size::{self, Size, WindowSizeInput},
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -710,6 +711,78 @@ fn proxy_context() -> Result<(std::path::PathBuf, Config), String> {
     Ok((root, cfg))
 }
 
+/// 在主窗口首次显示前同步执行，避免与前端 show() 和 700ms 兜底竞争。
+fn compensate_main_window_for_text_scale(app: &tauri::App) -> Result<(), String> {
+    let text_scale = window_size::system_text_scale()?;
+    if text_scale == 1.0 {
+        return Ok(());
+    }
+
+    let window = app
+        .get_webview_window("main")
+        .ok_or("找不到主窗口".to_string())?;
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == "main")
+        .ok_or("找不到主窗口配置".to_string())?;
+    let monitor = match window
+        .current_monitor()
+        .map_err(|cause| format!("查询窗口所在显示器失败：{cause}"))?
+    {
+        Some(monitor) => monitor,
+        None => window
+            .primary_monitor()
+            .map_err(|cause| format!("查询主显示器失败：{cause}"))?
+            .ok_or("找不到可用显示器".to_string())?,
+    };
+    let dpi_scale = window
+        .scale_factor()
+        .map_err(|cause| format!("读取窗口 DPI 缩放失败：{cause}"))?;
+    let inner = window
+        .inner_size()
+        .map_err(|cause| format!("读取窗口内容区尺寸失败：{cause}"))?;
+    let outer = window
+        .outer_size()
+        .map_err(|cause| format!("读取窗口外框尺寸失败：{cause}"))?;
+    let work_area = monitor.work_area().size;
+
+    let input = WindowSizeInput {
+        base: Size::new(config.width, config.height),
+        min: Size::new(
+            config.min_width.unwrap_or(config.width),
+            config.min_height.unwrap_or(config.height),
+        ),
+        text_scale,
+        dpi_scale,
+        work_area: Size::new(f64::from(work_area.width), f64::from(work_area.height)),
+        frame: Size::new(
+            f64::from(outer.width.saturating_sub(inner.width)),
+            f64::from(outer.height.saturating_sub(inner.height)),
+        ),
+    };
+    let Some(plan) = window_size::compensated_window_size(&input)? else {
+        return Ok(());
+    };
+
+    // 先放宽或收紧最小尺寸，再设目标尺寸：tao 设置最小尺寸时会立即按它约束当前窗口。
+    window
+        .set_min_size(Some(tauri::LogicalSize::new(
+            plan.min.width,
+            plan.min.height,
+        )))
+        .map_err(|cause| format!("设置窗口最小尺寸失败：{cause}"))?;
+    window
+        .set_size(tauri::LogicalSize::new(plan.size.width, plan.size.height))
+        .map_err(|cause| format!("设置窗口尺寸失败：{cause}"))?;
+    window
+        .center()
+        .map_err(|cause| format!("窗口居中失败：{cause}"))?;
+    Ok(())
+}
+
 fn install_main_window_show_fallback(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(700));
@@ -1030,6 +1103,9 @@ fn main() {
 
     tauri::Builder::default()
         .setup(|app| {
+            if let Err(message) = compensate_main_window_for_text_scale(app) {
+                eprintln!("warn: 未完成按系统文本大小调整窗口：{message}");
+            }
             install_main_window_show_fallback(app.handle().clone());
             Ok(())
         })
