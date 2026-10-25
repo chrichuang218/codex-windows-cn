@@ -19,3 +19,4 @@ pub mod store;
 pub mod uninstall;
 pub mod updater;
 pub mod versions;
+pub mod window_size;
