@@ -21,7 +21,7 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 percent-encoding = "2"
 directories = "5"
 quick-xml = "0.41"
-sha2 = "0.10"
+sha2 = "0.11"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
