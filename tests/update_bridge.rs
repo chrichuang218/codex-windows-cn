@@ -1,6 +1,6 @@
 use codex_windows_cn::bridge::{
-    apply_update_action, update_event_from_msg, update_status_from_decision, UpdateAction,
-    UpdateEvent, UpdateEventKind, UpdateStatusKind,
+    apply_update_action, install_event_from_msg, update_event_from_msg,
+    update_status_from_decision, UpdateAction, UpdateEvent, UpdateEventKind, UpdateStatusKind,
 };
 use codex_windows_cn::config::{Config, InstallMode, UpdatePolicy};
 use codex_windows_cn::installer::InstallMsg;
@@ -61,6 +61,67 @@ fn update_worker_messages_are_reported_as_chinese_events() {
             message: None,
         }
     );
+}
+
+#[test]
+fn download_failures_show_chinese_reasons_and_preserve_details_for_install_and_update() {
+    let cases = [
+        (
+            "读取安装包失败（已下载 7 字节）: request or response body error: error reading a body from connection: end of file before message length reached",
+            "下载过程中网络连接中断，请检查网络后重试。",
+        ),
+        (
+            "FE3 GetCookie failed: error decoding response body: error reading a body from connection: end of file before message length reached",
+            "下载过程中网络连接中断，请检查网络后重试。",
+        ),
+        (
+            "error sending request for url (https://example.invalid): client error (SendRequest): connection closed before message completed",
+            "下载过程中网络连接中断，请检查网络后重试。",
+        ),
+        (
+            "FE3 GetCookie failed: error sending request for url (https://example.invalid): operation timed out",
+            "下载超时，请检查网络后重试。",
+        ),
+        (
+            "error sending request for url (https://example.invalid): client error (Connect): dns error",
+            "无法连接下载服务器，请检查网络后重试。",
+        ),
+        (
+            "error sending request for url (https://example.invalid): invalid peer certificate: UnknownIssuer",
+            "下载连接的证书验证失败，请检查网络环境后重试。",
+        ),
+        (
+            "FE3 SyncUpdates failed: HTTP status server error (503 Service Unavailable)",
+            "下载服务器返回错误，请稍后重试。",
+        ),
+        (
+            "winget download failed (exit Some(-1978335114))\n--- stdout ---\nAuthentication required",
+            "winget 下载失败，请查看错误详情后重试。",
+        ),
+    ];
+    for (raw, summary) in cases {
+        let install = install_event_from_msg(InstallMsg::Error(raw.into()));
+        let update = update_event_from_msg(InstallMsg::Error(raw.into()));
+        assert_eq!(install.message.as_deref(), Some(summary), "install: {raw}");
+        assert_eq!(update.message.as_deref(), Some(summary), "update: {raw}");
+        assert_eq!(install.detail, raw);
+        assert_eq!(update.detail, raw);
+    }
+}
+
+#[test]
+fn non_network_failures_keep_their_original_reason() {
+    for raw in [
+        "安装已取消",
+        "写入安装包失败：磁盘空间不足",
+        "creating install root: Access is denied.",
+        "DisplayCatalog lookup failed: error decoding response body: expected value at line 1 column 1",
+    ] {
+        let install = install_event_from_msg(InstallMsg::Error(raw.into()));
+        let update = update_event_from_msg(InstallMsg::Error(raw.into()));
+        assert_eq!(install.message.as_deref(), Some(raw));
+        assert_eq!(update.message.as_deref(), Some(raw));
+    }
 }
 
 #[test]

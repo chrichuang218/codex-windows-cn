@@ -4,8 +4,8 @@
 //! - [`Fetcher::Direct`] — DisplayCatalog + FE3 SOAP, no local tool deps
 //! - [`Fetcher::Winget`] — shells out to `winget.exe`
 //!
-//! Prefer Direct; use Winget as a fallback when the direct path is blocked
-//! (firewall, custom root CA policy, etc.).
+//! Prefer Direct. Use only the selected fetcher and surface its error;
+//! an unattended download must not switch to an interactive login flow.
 
 mod direct;
 pub mod local_file;
@@ -24,8 +24,7 @@ pub enum Fetcher {
     Direct,
     Winget,
     /// Manual escape hatch — user provides a path to a pre-downloaded MSIX.
-    /// NOT part of the auto-fallback chain; callers must invoke
-    /// [`local_file::from_file`] directly with the path.
+    /// Callers must invoke [`local_file::from_file`] directly with the path.
     LocalFile,
 }
 
@@ -36,16 +35,6 @@ impl Fetcher {
             "winget" => Some(Fetcher::Winget),
             "local" | "local_file" | "localfile" | "file" => Some(Fetcher::LocalFile),
             _ => None,
-        }
-    }
-
-    /// The "other" network fetcher for auto-fallback. LocalFile isn't part
-    /// of this chain — it requires explicit user intent + a file path.
-    pub fn other(self) -> Self {
-        match self {
-            Fetcher::Direct => Fetcher::Winget,
-            Fetcher::Winget => Fetcher::Direct,
-            Fetcher::LocalFile => Fetcher::Direct,
         }
     }
 }
@@ -82,37 +71,6 @@ pub fn download_latest(
             "LocalFile fetcher requires an explicit file path — call \
              store::local_file::from_file directly, not download_latest()"
         )),
-    }
-}
-
-/// Try `preferred`, and if it fails try the other strategy. Returns which
-/// fetcher actually succeeded. Callers *may* persist that choice to
-/// `updater.json`, but beware: a single transient failure (offline, proxy
-/// blip) followed by the network recovering on the fallback attempt would
-/// permanently demote the user's chosen fetcher. The installer currently
-/// does not persist for that reason — see `installer.rs`. A stronger
-/// signal (N consecutive failures) would be needed before flipping.
-pub fn download_latest_with_fallback(
-    preferred: Fetcher,
-    product_id: &str,
-    dest_dir: &Path,
-    progress: &mut dyn FnMut(u64, Option<u64>) -> Result<()>,
-) -> Result<(DownloadResult, Fetcher)> {
-    match download_latest(preferred, product_id, dest_dir, progress) {
-        Ok(r) => Ok((r, preferred)),
-        Err(primary_err) => {
-            let fallback = preferred.other();
-            match download_latest(fallback, product_id, dest_dir, progress) {
-                Ok(r) => Ok((r, fallback)),
-                Err(fallback_err) => Err(anyhow::anyhow!(
-                    "both fetchers failed\n  {:?}: {}\n  {:?}: {}",
-                    preferred,
-                    primary_err,
-                    fallback,
-                    fallback_err
-                )),
-            }
-        }
     }
 }
 

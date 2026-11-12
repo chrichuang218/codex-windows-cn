@@ -508,7 +508,13 @@ function OverviewPanel({
       {inventoryError ? <StatusMessage tone="error">{inventoryError}</StatusMessage> : null}
       {updateEvent?.kind === "done" ? <StatusMessage tone="success">{updateEvent.detail}</StatusMessage> : null}
       {updateEvent?.kind === "error" ? (
-        <StatusMessage tone="error">{updateEvent.message ?? updateEvent.detail}</StatusMessage>
+        <StatusMessage
+          detail={updateEvent.detail}
+          key={updateEvent.detail}
+          tone="error"
+        >
+          {updateEvent.message ?? updateEvent.detail}
+        </StatusMessage>
       ) : null}
     </section>
   );

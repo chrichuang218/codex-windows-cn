@@ -689,9 +689,12 @@ describe("Codex Windows 中文助手 shell", () => {
   });
 
   test("system helper hides the unavailable cancel action", async () => {
+    let helperProgress: InstallEvent | null = null;
     const bridge = makeBridge({
       installed: false,
-      startInstall: async () => ({ accepted: true, cancellable: false })
+      startInstall: async () => ({ accepted: true, cancellable: false }),
+      onInstallEvent: () => () => {},
+      getInstallStatus: async () => helperProgress
     });
 
     render(<App bridge={bridge} />);
@@ -703,6 +706,12 @@ describe("Codex Windows 中文助手 shell", () => {
 
     expect(await screen.findByText("管理员安装进行中，完成前请勿关闭窗口")).toBeVisible();
     expect(screen.queryByRole("button", { name: "取消安装" })).toBeNull();
+    helperProgress = {
+      kind: "progress", title: "正在下载", detail: "正在获取官方下载地址（第 2/3 次尝试）。",
+      progress: 0, version: null, message: null
+    };
+    expect(await screen.findByText("正在获取官方下载地址（第 2/3 次尝试）。")).toBeVisible();
+    expect(screen.getByText("0%")).toBeVisible();
   });
 
   test("installed mode opens the ChatGPT overview and launches the default version", async () => {
@@ -859,6 +868,55 @@ describe("Codex Windows 中文助手 shell", () => {
     fireEvent.click(await screen.findByRole("button", { name: "复制错误详情" }));
     expect(await screen.findByText("已复制，可粘贴到反馈中")).toBeVisible();
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Store 返回 503"));
+  });
+
+  test.each([
+    [
+      "读取安装包失败（已下载 7 字节）: request or response body error: end of file before message length reached",
+      "下载过程中网络连接中断，请检查网络后重试。"
+    ],
+    ["写入安装包失败：磁盘空间不足", "写入安装包失败：磁盘空间不足"]
+  ])("official update failure shows its reason and copies the original error: %s", async (raw, message) => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    let emitUpdate: ((event: UpdateEvent) => void) | null = null;
+    render(<App bridge={makeBridge({
+      installed: true,
+      onUpdateEvent: (handler) => { emitUpdate = handler; return () => {}; }
+    })} />);
+    fireEvent.click(await screen.findByRole("button", { name: "立即更新" }));
+    act(() => {
+      emitUpdate?.({
+        kind: "progress", title: "正在下载更新", detail: "第 1/3 次尝试 · 6 / 10 MB",
+        progress: 0.6, version: null, message: null
+      });
+    });
+    expect(await screen.findByText("60%")).toBeVisible();
+    act(() => {
+      emitUpdate?.({
+        kind: "progress", title: "正在下载更新", detail: "正在获取官方下载地址（第 2/3 次尝试）。",
+        progress: 0, version: null, message: null
+      });
+    });
+    expect(await screen.findByText("0%")).toBeVisible();
+    expect(screen.getByText("正在获取官方下载地址（第 2/3 次尝试）。")).toBeVisible();
+    expect(screen.queryByText("60%")).toBeNull();
+    act(() => {
+      emitUpdate?.({
+        kind: "error",
+        title: "更新失败",
+        message,
+        detail: raw,
+        progress: null,
+        version: null
+      });
+    });
+    expect(await screen.findByText(message)).toBeVisible();
+    if (raw !== message) expect(screen.queryByText(raw)).toBeNull();
+    expect(screen.getByRole("button", { name: "立即更新" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "复制错误详情" }));
+    expect(await screen.findByText("已复制，可粘贴到反馈中")).toBeVisible();
+    expect(writeText).toHaveBeenCalledWith(raw);
   });
 
   test("installed shell marks available updates in amber and shows the assistant version", async () => {

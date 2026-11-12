@@ -652,10 +652,10 @@ pub fn update_event_from_msg(msg: InstallMsg) -> UpdateEvent {
                     "更新失败"
                 }
                 .into(),
-                detail: String::new(),
+                detail: message.clone(),
                 progress: None,
                 version: None,
-                message: Some(message),
+                message: Some(install_error_message(&message)),
             }
         }
     }
@@ -899,10 +899,10 @@ pub fn install_event_from_msg(msg: InstallMsg) -> InstallEvent {
                     "安装失败"
                 }
                 .into(),
-                detail: String::new(),
+                detail: message.clone(),
                 progress: None,
                 version: None,
-                message: Some(message),
+                message: Some(install_error_message(&message)),
             }
         }
     }
@@ -1055,6 +1055,40 @@ fn launcher_skip_message(reason: &str) -> String {
         return "已按设置检查，稍后会自动再检查".into();
     }
     "暂不检查启动器更新".into()
+}
+
+fn install_error_message(raw: &str) -> String {
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("winget download failed") {
+        return "winget 下载失败，请查看错误详情后重试。".into();
+    }
+    if lower.contains("winget is not available") || lower.contains("failed to invoke winget") {
+        return "本机无法运行 winget，请查看错误详情。".into();
+    }
+    let sending = lower.contains("error sending request");
+    let body = lower.contains("request or response body error");
+    let decoding = lower.contains("error decoding response body");
+    if sending || body || decoding {
+        if lower.contains("certificate") {
+            return "下载连接的证书验证失败，请检查网络环境后重试。".into();
+        }
+        if lower.contains("timed out") {
+            return "下载超时，请检查网络后重试。".into();
+        }
+        if body
+            || lower.contains("error reading a body from connection")
+            || lower.contains("connection closed before message completed")
+        {
+            return "下载过程中网络连接中断，请检查网络后重试。".into();
+        }
+        if sending {
+            return "无法连接下载服务器，请检查网络后重试。".into();
+        }
+    }
+    if lower.contains("http status client error") || lower.contains("http status server error") {
+        return "下载服务器返回错误，请稍后重试。".into();
+    }
+    raw.into()
 }
 
 fn launcher_error_message(message: &str) -> String {

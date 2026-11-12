@@ -65,8 +65,8 @@ pub struct Config {
     /// Disable automatic version pruning. Manual deletion remains available.
     #[serde(default)]
     pub keep_all_versions: bool,
-    /// Which strategy the launcher uses to download MSIX updates. Currently
-    /// not auto-flipped on fallback success — see `installer::update_inner`.
+    /// The selected MSIX downloader. Failures are reported without switching
+    /// to another downloader or changing this preference.
     #[serde(default)]
     pub fetcher: Fetcher,
     /// Maintain `versions/current` as a directory junction pointing at the

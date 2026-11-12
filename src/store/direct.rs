@@ -135,7 +135,9 @@ fn download_url(
     let mut buf = [0u8; 64 * 1024];
     let mut written = 0u64;
     loop {
-        let n = resp.read(&mut buf)?;
+        let n = resp
+            .read(&mut buf)
+            .with_context(|| format!("读取安装包失败（已下载 {written} 字节）"))?;
         if n == 0 {
             break;
         }

@@ -19,7 +19,7 @@ use crate::extract;
 use crate::junction;
 use crate::registry;
 use crate::shortcut;
-use crate::store::{self, Fetcher};
+use crate::store::{self, DownloadResult, Fetcher};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -29,6 +29,7 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 const MIN_UPDATE_EXTRACT_VISIBLE: Duration = Duration::from_millis(900);
+const DIRECT_DOWNLOAD_ATTEMPTS: u32 = 3;
 
 #[derive(Debug, Clone)]
 pub struct InstallOptions {
@@ -49,7 +50,7 @@ pub struct InstallOptions {
     pub local_msix: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum InstallMsg {
     /// Phase name (e.g. "Downloading", "Extracting") + detail line.
     Phase { phase: String, detail: String },
@@ -85,7 +86,11 @@ pub fn default_path(mode: InstallMode) -> PathBuf {
 /// with phase/progress updates AND the final Done/Error — callers should
 /// treat a Done or Error as the last message they'll ever see.
 pub fn run(opts: InstallOptions, on_msg: impl Fn(InstallMsg) + Send + 'static) {
-    match run_inner(&opts, &on_msg, None, PostWorkMode::Background) {
+    let report = |msg| {
+        on_msg(msg);
+        Ok(())
+    };
+    match run_inner(&opts, &report, None, PostWorkMode::Background) {
         Ok(version) => on_msg(InstallMsg::Done { version }),
         Err(e) => on_msg(InstallMsg::Error(format!("{:#}", e))),
     }
@@ -96,9 +101,13 @@ pub fn run_cancellable(
     cancel: Arc<AtomicBool>,
     on_msg: impl Fn(InstallMsg) + Send + 'static,
 ) {
+    let report = |msg| {
+        on_msg(msg);
+        Ok(())
+    };
     match run_inner(
         &opts,
-        &on_msg,
+        &report,
         Some(cancel.as_ref()),
         PostWorkMode::Background,
     ) {
@@ -109,8 +118,11 @@ pub fn run_cancellable(
 
 /// Run a System install inside the one-shot elevated helper. Post-install
 /// Windows integration must finish before the helper process exits.
-pub fn run_elevated(opts: InstallOptions) -> Result<String> {
-    run_inner(&opts, &|_| {}, None, PostWorkMode::Inline)
+pub fn run_elevated(
+    opts: InstallOptions,
+    on_msg: impl Fn(InstallMsg) -> Result<()>,
+) -> Result<String> {
+    run_inner(&opts, &on_msg, None, PostWorkMode::Inline)
 }
 
 /// Update an existing install in-place. Loads `<root>/updater.json`, downloads
@@ -118,7 +130,11 @@ pub fn run_elevated(opts: InstallOptions) -> Result<String> {
 /// and `last_check_unix`, then prunes. Does NOT replace the launcher exe
 /// (we're running from it). Does NOT change install_mode / keep_versions / etc.
 pub fn update(root: std::path::PathBuf, on_msg: impl Fn(InstallMsg) + Send + 'static) {
-    match update_inner(&root, &on_msg, PostWorkMode::Background) {
+    let report = |msg| {
+        on_msg(msg);
+        Ok(())
+    };
+    match update_inner(&root, &report, PostWorkMode::Background) {
         Ok(version) => on_msg(InstallMsg::Done { version }),
         Err(e) => on_msg(InstallMsg::Error(format!("{:#}", e))),
     }
@@ -126,8 +142,8 @@ pub fn update(root: std::path::PathBuf, on_msg: impl Fn(InstallMsg) + Send + 'st
 
 /// Run a System update inside the one-shot elevated helper. Post-update
 /// Windows integration must finish before the helper process exits.
-pub fn update_elevated(root: PathBuf) -> Result<String> {
-    update_inner(&root, &|_| {}, PostWorkMode::Inline)
+pub fn update_elevated(root: PathBuf, on_msg: impl Fn(InstallMsg) -> Result<()>) -> Result<String> {
+    update_inner(&root, &on_msg, PostWorkMode::Inline)
 }
 
 #[derive(Clone, Copy)]
@@ -138,7 +154,7 @@ enum PostWorkMode {
 
 fn update_inner(
     root: &Path,
-    on_msg: &dyn Fn(InstallMsg),
+    on_msg: &dyn Fn(InstallMsg) -> Result<()>,
     post_work_mode: PostWorkMode,
 ) -> Result<String> {
     // load_runtime, not load — the per-user state overlay (System installs)
@@ -155,27 +171,25 @@ fn update_inner(
     emit_progress_detail(
         on_msg,
         "Downloading",
-        &update_start_detail(update_fetcher),
+        &download_start_detail(update_fetcher),
         None,
-    );
-
-    let boxed = BoxedFn(on_msg, None);
-    // Discard `_succeeded_via`: a single transient failure (offline, proxy
-    // blip) shouldn't permanently demote the user's chosen fetcher. A
-    // stronger signal (N consecutive failures) would be needed first.
-    let (result, _succeeded_via) = store::download_latest_with_fallback(
-        update_fetcher,
-        store::PRODUCT_ID_CODEX,
-        &downloads,
-        &mut |done, total| boxed.progress_bytes(done, total),
     )?;
+
+    let result = download_with_retry(update_fetcher, on_msg, None, |progress| {
+        store::download_latest(
+            update_fetcher,
+            store::PRODUCT_ID_CODEX,
+            &downloads,
+            progress,
+        )
+    })?;
 
     emit_progress_detail(
         on_msg,
         "Extracting",
         &format!("正在准备解压 Codex {}。", result.version),
         None,
-    );
+    )?;
 
     let extract_started = Instant::now();
     let boxed = BoxedFn(on_msg, None);
@@ -190,7 +204,7 @@ fn update_inner(
         std::thread::sleep(MIN_UPDATE_EXTRACT_VISIBLE - elapsed);
     }
 
-    emit_progress_detail(on_msg, "Finalizing", "正在写入更新配置。", None);
+    emit_progress_detail(on_msg, "Finalizing", "正在写入更新配置。", None)?;
 
     // Reload just before committing so settings changed while the large
     // download/extract was running are preserved instead of being overwritten
@@ -238,7 +252,7 @@ fn update_inner(
 
 fn run_inner(
     opts: &InstallOptions,
-    on_msg: &dyn Fn(InstallMsg),
+    on_msg: &dyn Fn(InstallMsg) -> Result<()>,
     cancel: Option<&AtomicBool>,
     post_work_mode: PostWorkMode,
 ) -> Result<String> {
@@ -254,7 +268,7 @@ fn run_inner(
         "Downloading",
         &download_start_detail(opts.fetcher),
         None,
-    );
+    )?;
 
     let result = match opts.fetcher {
         Fetcher::LocalFile => {
@@ -265,20 +279,14 @@ fn run_inner(
                 .ok_or_else(|| anyhow::anyhow!("LocalFile fetcher needs a file path"))?;
             let on_msg_clone = BoxedFn(on_msg, cancel);
             store::local_file::from_file(src, &downloads, &mut |done, total| {
-                on_msg_clone.progress_bytes(done, total)
+                on_msg_clone.progress_bytes(done, total, None)
             })?
         }
         _ => {
             check_cancel(cancel)?;
-            let on_msg_clone = BoxedFn(on_msg, cancel);
-            // See the note in `update_inner` for why we discard `_succeeded_via`.
-            let (r, _succeeded_via) = store::download_latest_with_fallback(
-                opts.fetcher,
-                store::PRODUCT_ID_CODEX,
-                &downloads,
-                &mut |done, total| on_msg_clone.progress_bytes(done, total),
-            )?;
-            r
+            download_with_retry(opts.fetcher, on_msg, cancel, |progress| {
+                store::download_latest(opts.fetcher, store::PRODUCT_ID_CODEX, &downloads, progress)
+            })?
         }
     };
 
@@ -288,7 +296,7 @@ fn run_inner(
         "Extracting",
         &format!("正在准备解压 Codex {}。", result.version),
         None,
-    );
+    )?;
 
     check_cancel(cancel)?;
     let on_msg_clone = BoxedFn(on_msg, cancel);
@@ -300,7 +308,7 @@ fn run_inner(
     )?;
 
     // --- 3. Place launcher stub --------------------------------------------
-    emit_progress_detail(on_msg, "Finalizing", "正在写入启动器和配置。", None);
+    emit_progress_detail(on_msg, "Finalizing", "正在写入启动器和配置。", None)?;
 
     check_cancel(cancel)?;
     place_launcher(&opts.root)?;
@@ -702,31 +710,133 @@ fn write_registry(root: &Path, mode: InstallMode, version: &str) -> Result<()> {
 }
 
 fn emit_progress_detail(
-    on_msg: &dyn Fn(InstallMsg),
+    on_msg: &dyn Fn(InstallMsg) -> Result<()>,
     phase: &str,
     detail: &str,
     progress: Option<f32>,
-) {
+) -> Result<()> {
     on_msg(InstallMsg::ProgressDetail {
         phase: phase.into(),
         detail: detail.into(),
         progress,
-    });
+    })
+}
+
+fn download_with_retry(
+    fetcher: Fetcher,
+    on_msg: &dyn Fn(InstallMsg) -> Result<()>,
+    cancel: Option<&AtomicBool>,
+    mut download: impl FnMut(&mut dyn FnMut(u64, Option<u64>) -> Result<()>) -> Result<DownloadResult>,
+) -> Result<DownloadResult> {
+    let max_attempts = if fetcher == Fetcher::Direct {
+        DIRECT_DOWNLOAD_ATTEMPTS
+    } else {
+        1
+    };
+    let boxed = BoxedFn(on_msg, cancel);
+    let mut attempt = 1;
+    loop {
+        check_cancel(cancel)?;
+        let direct_attempt = (fetcher == Fetcher::Direct).then_some(attempt);
+        if direct_attempt.is_some() {
+            emit_progress_detail(
+                on_msg,
+                "Downloading",
+                &format!("正在获取官方下载地址（第 {attempt}/{max_attempts} 次尝试）。"),
+                Some(0.0),
+            )?;
+        }
+        check_cancel(cancel)?;
+        // Invoke the entire download again so each attempt gets a fresh signed URL.
+        let result = download(&mut |done, total| boxed.progress_bytes(done, total, direct_attempt));
+        check_cancel(cancel)?;
+        let error = match result {
+            Ok(result) => return Ok(result),
+            Err(error) => error,
+        };
+        if error.to_string() == "安装已取消" || fetcher != Fetcher::Direct {
+            return Err(error);
+        }
+        if attempt == max_attempts || !is_retryable_download_error(&error) {
+            return Err(error)
+                .with_context(|| format!("直连下载失败（已尝试 {attempt}/{max_attempts} 次）"));
+        }
+        emit_progress_detail(
+            on_msg,
+            "Downloading",
+            &format!(
+                "下载暂时失败，{attempt} 秒后重试（第 {}/{max_attempts} 次尝试）。",
+                attempt + 1
+            ),
+            Some(0.0),
+        )?;
+        for _ in 0..attempt * 10 {
+            check_cancel(cancel)?;
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        attempt += 1;
+    }
+}
+
+fn is_retryable_download_error(error: &anyhow::Error) -> bool {
+    // TLS validation failures can also be classified as connection errors.
+    if error.chain().any(|cause| {
+        cause
+            .to_string()
+            .to_ascii_lowercase()
+            .contains("certificate")
+    }) {
+        return false;
+    }
+    error.chain().any(|cause| {
+        let request_error = cause.downcast_ref::<reqwest::Error>().or_else(|| {
+            // blocking Response::read wraps reqwest errors in std::io::Error.
+            cause
+                .downcast_ref::<std::io::Error>()
+                .and_then(std::io::Error::get_ref)
+                .and_then(|inner| inner.downcast_ref::<reqwest::Error>())
+        });
+        let Some(request_error) = request_error else {
+            return false;
+        };
+        if let Some(status) = request_error.status() {
+            return matches!(status.as_u16(), 408 | 429 | 500 | 502 | 503 | 504);
+        }
+        if request_error.is_timeout() || request_error.is_connect() {
+            return true;
+        }
+        // Request/Body/Decode can wrap both transport and content failures.
+        // Inspect their causes so malformed HTTP/JSON remains non-retryable.
+        let mut source = std::error::Error::source(request_error);
+        while let Some(cause) = source {
+            if let Some(http) = cause.downcast_ref::<hyper::Error>() {
+                if http.is_incomplete_message() || http.is_closed() {
+                    return true;
+                }
+            }
+            if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+                if matches!(
+                    io.kind(),
+                    std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::ConnectionAborted
+                        | std::io::ErrorKind::BrokenPipe
+                        | std::io::ErrorKind::UnexpectedEof
+                        | std::io::ErrorKind::TimedOut
+                ) {
+                    return true;
+                }
+            }
+            source = cause.source();
+        }
+        false
+    })
 }
 
 fn download_start_detail(fetcher: Fetcher) -> String {
     match fetcher {
-        Fetcher::Direct => "正在解析 Codex 下载地址；如果直连超时，将自动切换 winget。".into(),
+        Fetcher::Direct => "正在解析官方下载地址。".into(),
         Fetcher::Winget => "正在调用 winget 下载 Codex。".into(),
         Fetcher::LocalFile => "正在复制本地 MSIX 文件。".into(),
-    }
-}
-
-fn update_start_detail(fetcher: Fetcher) -> String {
-    match fetcher {
-        Fetcher::Direct => "正在解析 Codex 下载地址；如果直连失败，将自动切换 winget。".into(),
-        Fetcher::Winget => "正在调用 winget 下载 Codex；如果 winget 失败，将自动切换直连。".into(),
-        other => download_start_detail(other),
     }
 }
 
@@ -737,12 +847,12 @@ fn configured_update_fetcher(fetcher: Fetcher) -> Fetcher {
     }
 }
 
-/// Helper to pass a `&dyn Fn(InstallMsg)` into a `FnMut(u64, Option<u64>)`
-/// progress callback without cloning the closure.
-struct BoxedFn<'a>(&'a dyn Fn(InstallMsg), Option<&'a AtomicBool>);
+/// Adapt progress counters to messages while propagating cancellation and
+/// progress-channel failures to the installer.
+struct BoxedFn<'a>(&'a dyn Fn(InstallMsg) -> Result<()>, Option<&'a AtomicBool>);
 
 impl BoxedFn<'_> {
-    fn progress_bytes(&self, done: u64, total: Option<u64>) -> Result<()> {
+    fn progress_bytes(&self, done: u64, total: Option<u64>, attempt: Option<u32>) -> Result<()> {
         check_cancel(self.1)?;
         let frac = total
             .filter(|t| *t > 0)
@@ -751,12 +861,15 @@ impl BoxedFn<'_> {
             Some(t) => format!("{} / {} MB", done / 1_048_576, t / 1_048_576),
             None => format!("{} MB", done / 1_048_576),
         };
+        let detail = match attempt {
+            Some(attempt) => format!("第 {attempt}/{DIRECT_DOWNLOAD_ATTEMPTS} 次尝试 · {detail}"),
+            None => detail,
+        };
         (self.0)(InstallMsg::ProgressDetail {
             phase: "Downloading".into(),
             detail,
             progress: frac,
-        });
-        Ok(())
+        })
     }
 
     fn progress_entries(&self, done: u64, total: Option<u64>) -> Result<()> {
@@ -772,8 +885,7 @@ impl BoxedFn<'_> {
             phase: "Extracting".into(),
             detail,
             progress: frac,
-        });
-        Ok(())
+        })
     }
 }
 
@@ -790,10 +902,280 @@ fn check_cancel(cancel: Option<&AtomicBool>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::{Cell, RefCell};
+    use std::collections::VecDeque;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    fn response_error(response: &'static [u8]) -> anyhow::Error {
+        response_error_with(response, |mut response| {
+            std::io::copy(&mut response, &mut std::io::sink())?;
+            Ok(())
+        })
+    }
+
+    fn response_error_with(
+        response: &'static [u8],
+        read: impl FnOnce(reqwest::blocking::Response) -> Result<()>,
+    ) -> anyhow::Error {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/fixture", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                let n = socket.read(&mut buffer).unwrap();
+                assert_ne!(n, 0);
+                request.extend_from_slice(&buffer[..n]);
+            }
+            socket.write_all(response).unwrap();
+        });
+        let result = (|| -> Result<()> {
+            let client = reqwest::blocking::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(2))
+                .build()?;
+            read(client.get(url).send()?.error_for_status()?)
+        })();
+        server.join().unwrap();
+        result.expect_err("fixture must fail")
+    }
+
+    fn temporary_server_error() -> anyhow::Error {
+        response_error(
+            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        )
+    }
+
+    fn downloaded_package() -> DownloadResult {
+        DownloadResult {
+            msix_path: PathBuf::from("test-package.msix"),
+            moniker: "OpenAI.Codex_1.2.3.0_x64__test".into(),
+            version: "1.2.3.0".into(),
+        }
+    }
+
+    #[test]
+    fn direct_download_recovers_on_third_attempt_and_reports_fresh_progress() {
+        let mut failures = VecDeque::from([
+            temporary_server_error(),
+            response_error(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 1024\r\nConnection: close\r\n\r\npartial",
+            ),
+        ]);
+        let attempts = Cell::new(0);
+        let events = RefCell::new(Vec::new());
+        let result = download_with_retry(
+            Fetcher::Direct,
+            &|msg| {
+                events.borrow_mut().push(msg);
+                Ok(())
+            },
+            None,
+            |progress| {
+                attempts.set(attempts.get() + 1);
+                progress(6, Some(10))?;
+                match failures.pop_front() {
+                    Some(error) => Err(error),
+                    None => Ok(downloaded_package()),
+                }
+            },
+        )
+        .expect("third attempt should succeed");
+        assert_eq!(result.version, "1.2.3.0");
+        assert_eq!(attempts.get(), 3);
+        let events = events.borrow();
+        for attempt in 1..=3 {
+            let label = format!("第 {attempt}/3 次尝试");
+            assert!(
+                events.iter().any(|msg| matches!(msg,
+                    InstallMsg::ProgressDetail { detail, progress: Some(value), .. }
+                    if detail.contains(&label) && *value == 0.0
+                )),
+                "must reset progress for {label}"
+            );
+            assert!(
+                events.iter().any(|msg| matches!(msg,
+                    InstallMsg::ProgressDetail { detail, progress: Some(value), .. }
+                    if detail.contains(&label) && *value == 0.6
+                )),
+                "must preserve attempt label while receiving bytes"
+            );
+        }
+    }
+
+    #[test]
+    fn direct_download_stops_after_three_failures_and_preserves_the_last_cause() {
+        let mut attempts = 0;
+        let error = download_with_retry(Fetcher::Direct, &|_| Ok(()), None, |_| {
+            attempts += 1;
+            Err(temporary_server_error())
+        })
+        .unwrap_err();
+        assert_eq!(attempts, 3);
+        assert!(format!("{error:#}").contains("已尝试 3/3 次"));
+        assert!(format!("{error:#}").contains("503 Service Unavailable"));
+    }
+
+    #[test]
+    fn direct_download_retries_connections_closed_before_response_headers_finish() {
+        let mut failures = VecDeque::from([
+            response_error(b""),
+            response_error(b"HTTP/1.1 200 OK\r\nContent-Len"),
+        ]);
+        let mut attempts = 0;
+        let result = download_with_retry(Fetcher::Direct, &|_| Ok(()), None, |_| {
+            attempts += 1;
+            match failures.pop_front() {
+                Some(error) => Err(error),
+                None => Ok(downloaded_package()),
+            }
+        });
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn direct_download_retries_truncated_text_and_json_metadata() {
+        const TRUNCATED: &[u8] =
+            b"HTTP/1.1 200 OK\r\nContent-Length: 1024\r\nConnection: close\r\n\r\n{}";
+        let mut failures = VecDeque::from([
+            response_error_with(TRUNCATED, |response| {
+                response.text()?;
+                Ok(())
+            }),
+            response_error_with(TRUNCATED, |response| {
+                response.json::<serde_json::Value>()?;
+                Ok(())
+            }),
+        ]);
+        let mut attempts = 0;
+        let result = download_with_retry(Fetcher::Direct, &|_| Ok(()), None, |_| {
+            attempts += 1;
+            match failures.pop_front() {
+                Some(error) => Err(error),
+                None => Ok(downloaded_package()),
+            }
+        });
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn direct_download_retries_network_timeouts() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/timeout", listener.local_addr().unwrap());
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_millis(25))
+            .build()
+            .unwrap();
+        let mut attempts = 0;
+        let error = download_with_retry(Fetcher::Direct, &|_| Ok(()), None, |_| {
+            attempts += 1;
+            // Keep the listener open without responding to any request.
+            Err(client.get(&url).send().unwrap_err().into())
+        })
+        .unwrap_err();
+        assert_eq!(attempts, 3);
+        assert!(format!("{error:#}").contains("timed out"));
+    }
+
+    #[test]
+    fn permanent_errors_and_cancellation_are_not_retried() {
+        let errors = [
+            response_error(
+                b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            ),
+            anyhow::Error::from(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "disk write denied",
+            )),
+            anyhow::anyhow!("安装已取消"),
+            temporary_server_error().context("invalid peer certificate"),
+            anyhow::anyhow!("Parsing SyncUpdates response failed"),
+            response_error(b"THIS IS NOT HTTP\r\n\r\n"),
+            response_error(
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\nZ\r\ninvalid\r\n0\r\n\r\n",
+            ),
+            response_error_with(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nnotjson",
+                |response| {
+                    response.json::<serde_json::Value>()?;
+                    Ok(())
+                },
+            ),
+        ];
+        for error in errors {
+            let raw = format!("{error:#}");
+            let mut error = Some(error);
+            let mut attempts = 0;
+            let actual = download_with_retry(Fetcher::Direct, &|_| Ok(()), None, |_| {
+                attempts += 1;
+                Err(error.take().expect("permanent error must not be retried"))
+            })
+            .unwrap_err();
+            assert_eq!(attempts, 1);
+            assert!(format!("{actual:#}").contains(&raw));
+            if raw == "安装已取消" {
+                assert_eq!(actual.to_string(), raw);
+            }
+        }
+    }
+
+    #[test]
+    fn cancelling_during_retry_wait_does_not_start_another_request() {
+        let cancel = AtomicBool::new(false);
+        let mut attempts = 0;
+        let error = download_with_retry(Fetcher::Direct, &|msg| {
+            if matches!(msg, InstallMsg::ProgressDetail { detail, .. } if detail.contains("秒后重试")) {
+                cancel.store(true, Ordering::SeqCst);
+            }
+            Ok(())
+        }, Some(&cancel), |_| {
+            attempts += 1;
+            Err(temporary_server_error())
+        }).unwrap_err();
+        assert_eq!(attempts, 1);
+        assert_eq!(error.to_string(), "安装已取消");
+    }
+
+    #[test]
+    fn manually_selected_winget_is_not_automatically_retried() {
+        let mut attempts = 0;
+        let error = download_with_retry(Fetcher::Winget, &|_| Ok(()), None, |_| {
+            attempts += 1;
+            Err(temporary_server_error())
+        })
+        .unwrap_err();
+        assert_eq!(attempts, 1);
+        assert!(format!("{error:#}").contains("503 Service Unavailable"));
+    }
 
     #[test]
     fn update_keeps_configured_direct_fetcher() {
         assert_eq!(configured_update_fetcher(Fetcher::Direct), Fetcher::Direct);
+    }
+
+    #[test]
+    fn progress_channel_failure_stops_before_starting_a_download() {
+        let mut requests = 0;
+        let error = download_with_retry(
+            Fetcher::Direct,
+            &|_| anyhow::bail!("回传管理员任务进度失败"),
+            None,
+            |_| {
+                requests += 1;
+                Ok(downloaded_package())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(requests, 0);
+        assert_eq!(error.to_string(), "回传管理员任务进度失败");
     }
 
     #[test]
@@ -812,8 +1194,8 @@ mod tests {
     #[test]
     fn update_direct_detail_matches_actual_preferred_fetcher() {
         assert_eq!(
-            update_start_detail(configured_update_fetcher(Fetcher::Direct)),
-            "正在解析 Codex 下载地址；如果直连失败，将自动切换 winget。"
+            download_start_detail(configured_update_fetcher(Fetcher::Direct)),
+            "正在解析官方下载地址。"
         );
     }
 }

@@ -10,10 +10,13 @@ use codex_windows_cn::{
         UpdateStart, UpdateStatus, VersionActionResult, VersionInventory, VersionSettingsRequest,
     },
     config::{Config, InstallMode},
-    dialogs, elevate, installer, launcher_update, mode, proxy, uninstall, updater, versions,
+    dialogs, elevate,
+    elevated_progress::{ProgressReader, ProgressWriter},
+    installer, launcher_update, mode, proxy, uninstall, updater, versions,
     window_size::{self, Size, WindowSizeInput},
 };
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -137,7 +140,7 @@ fn start_install(app: tauri::AppHandle, request: InstallRequest) -> Result<Insta
             }),
         );
         std::thread::spawn(move || {
-            let result = run_elevated_task(
+            let result = run_elevated_task_with_progress(
                 &format!(
                     "--install-system {} {}",
                     quote_cli_path(&request_path),
@@ -145,6 +148,7 @@ fn start_install(app: tauri::AppHandle, request: InstallRequest) -> Result<Insta
                 ),
                 &result_path,
                 "系统安装",
+                |msg| publish_install_event(&app, bridge::install_event_from_msg(msg)),
             );
             let _ = std::fs::remove_file(&request_path);
             let _ = std::fs::remove_file(&result_path);
@@ -484,10 +488,11 @@ fn start_update(app: tauri::AppHandle) -> Result<UpdateStart, String> {
             }),
         );
         std::thread::spawn(move || {
-            let result = run_elevated_task(
+            let result = run_elevated_task_with_progress(
                 &format!("--update-system {}", quote_cli_path(&result_path)),
                 &result_path,
                 "系统更新",
+                |msg| publish_update_event(&app, bridge::update_event_from_msg(msg)),
             );
             let _ = std::fs::remove_file(&result_path);
             let event = match result {
@@ -860,6 +865,42 @@ fn quote_cli_path(path: &Path) -> String {
 fn run_elevated_task(args: &str, result_path: &Path, operation: &str) -> Result<String, String> {
     let exit_code = elevate::respawn_elevated_wait(args)
         .map_err(|cause| format!("{operation}未获得管理员权限，操作未开始：{cause:#}"))?;
+    read_elevated_task_result(result_path, operation, exit_code)
+}
+
+fn run_elevated_task_with_progress(
+    args: &str,
+    result_path: &Path,
+    operation: &str,
+    mut on_msg: impl FnMut(installer::InstallMsg),
+) -> Result<String, String> {
+    let mut reader = ProgressReader::create(result_path).map_err(|cause| format!("{cause:#}"))?;
+    let mut read_error_reported = false;
+    let exit_code =
+        elevate::respawn_elevated_wait_with_progress(args, || match reader.read_latest() {
+            Ok(Some(msg)) => {
+                read_error_reported = false;
+                on_msg(msg);
+            }
+            Ok(None) => {}
+            Err(cause) if !read_error_reported => {
+                read_error_reported = true;
+                on_msg(installer::InstallMsg::Phase {
+                    phase: "Working".into(),
+                    detail: format!("暂时无法读取{operation}进度，仍在等待操作结果：{cause:#}"),
+                });
+            }
+            Err(_) => {}
+        })
+        .map_err(|cause| format!("无法完成{operation}：{cause:#}"))?;
+    read_elevated_task_result(result_path, operation, exit_code)
+}
+
+fn read_elevated_task_result(
+    result_path: &Path,
+    operation: &str,
+    exit_code: u32,
+) -> Result<String, String> {
     let raw = std::fs::read(result_path)
         .map_err(|cause| format!("{operation}进程未返回结果（退出代码 {exit_code}）：{cause}"))?;
     let result: ElevatedTaskResult = serde_json::from_slice(&raw)
@@ -910,7 +951,10 @@ fn run_system_install_helper(request_path: &Path, result_path: &Path) -> i32 {
             return Err("系统安装请求的安装范围无效".into());
         }
         let options = bridge::install_options_from_request(request)?;
-        installer::run_elevated(options).map_err(|cause| format!("系统安装失败：{cause:#}"))
+        let progress =
+            RefCell::new(ProgressWriter::open(result_path).map_err(|cause| format!("{cause:#}"))?);
+        installer::run_elevated(options, |msg| progress.borrow_mut().publish(msg))
+            .map_err(|cause| format!("系统安装失败：{cause:#}"))
     })();
     finish_elevated_task(result_path, result)
 }
@@ -924,7 +968,10 @@ fn run_system_update_helper(result_path: &Path) -> i32 {
         if !matches!(cfg.install_mode, InstallMode::System) {
             return Err("当前安装不是所有用户安装，无法执行系统更新".into());
         }
-        installer::update_elevated(root).map_err(|cause| format!("系统更新失败：{cause:#}"))
+        let progress =
+            RefCell::new(ProgressWriter::open(result_path).map_err(|cause| format!("{cause:#}"))?);
+        installer::update_elevated(root, |msg| progress.borrow_mut().publish(msg))
+            .map_err(|cause| format!("系统更新失败：{cause:#}"))
     })();
     finish_elevated_task(result_path, result)
 }

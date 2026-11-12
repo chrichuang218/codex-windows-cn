@@ -5,6 +5,7 @@ pub mod config;
 pub mod dark_window;
 pub mod dialogs;
 pub mod elevate;
+pub mod elevated_progress;
 pub mod extract;
 pub mod installer;
 pub mod junction;

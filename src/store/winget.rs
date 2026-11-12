@@ -1,7 +1,7 @@
 //! Winget fetcher: shells out to the Windows Package Manager CLI.
 //!
-//! Used as a fallback when the direct FE3 path is unreachable (firewall,
-//! DPI, cert pinning, etc.) or when the user explicitly prefers it. Requires
+//! Used only when the user explicitly selects it, with authentication UI
+//! disabled so a failed download cannot open a Microsoft login window. Requires
 //! `winget.exe` on PATH; Windows 11 has it by default, modern Windows 10 as
 //! well through the "App Installer" Store package.
 //!
@@ -34,21 +34,7 @@ pub(super) fn download_latest(
     // find_downloaded_msix below unambiguously picks the new one.
     clear_existing_msix(dest_dir);
 
-    let output = winget_command()
-        .args([
-            "download",
-            "--id",
-            product_id,
-            "--source",
-            "msstore",
-            "--accept-source-agreements",
-            "--accept-package-agreements",
-            "--architecture",
-            "x64",
-            "--skip-dependencies",
-            "--download-directory",
-        ])
-        .arg(dest_dir)
+    let output = download_command(product_id, dest_dir)
         .output()
         .context("failed to invoke winget (is it installed and on PATH?)")?;
 
@@ -81,6 +67,30 @@ pub(super) fn download_latest(
         moniker,
         version,
     })
+}
+
+fn download_command(product_id: &str, dest_dir: &Path) -> Command {
+    let mut command = winget_command();
+    command
+        .args([
+            "download",
+            "--id",
+            product_id,
+            "--source",
+            "msstore",
+            "--accept-source-agreements",
+            "--accept-package-agreements",
+            "--architecture",
+            "x64",
+            "--skip-dependencies",
+            "--skip-license",
+            "--authentication-mode",
+            "silent",
+            "--disable-interactivity",
+            "--download-directory",
+        ])
+        .arg(dest_dir);
+    command
 }
 
 fn ensure_winget_exists() -> Result<()> {
@@ -134,4 +144,22 @@ fn find_downloaded_msix(dir: &Path) -> Result<(PathBuf, String)> {
         }
     }
     bail!("no .msix/.msixbundle file found in {}", dir.display());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_command_forbids_interactive_authentication() {
+        let destination = Path::new(r"C:\Downloads\Codex packages");
+        let command = download_command("9PLM9XGG6VKS", destination);
+        let args: Vec<_> = command.get_args().collect();
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--authentication-mode", "silent"]));
+        assert!(args.iter().any(|arg| *arg == "--disable-interactivity"));
+        assert!(args.iter().any(|arg| *arg == "--skip-license"));
+        assert_eq!(args.last().copied(), Some(destination.as_os_str()));
+    }
 }

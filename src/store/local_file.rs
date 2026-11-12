@@ -8,8 +8,8 @@
 //!
 //! Intended as a manual escape hatch for users behind restrictive
 //! networks who obtained the MSIX from elsewhere (a different machine,
-//! a USB stick, rg-adguard, etc.). NOT part of the auto-fallback chain
-//! — selecting this fetcher always requires an explicit `--msix <path>`.
+//! a USB stick, rg-adguard, etc.). The installer must provide an explicit
+//! path to the local package.
 
 use super::DownloadResult;
 use anyhow::{anyhow, bail, Context, Result};

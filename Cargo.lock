@@ -340,10 +340,11 @@ dependencies = [
 
 [[package]]
 name = "codex-windows-cn"
-version = "0.1.22"
+version = "0.1.23"
 dependencies = [
  "anyhow",
  "directories",
+ "hyper",
  "percent-encoding",
  "quick-xml",
  "reqwest 0.12.28",
