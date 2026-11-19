@@ -1336,6 +1336,19 @@ a:focus-visible {
   font-size: 11px;
 }
 
+.project-support {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--console-line);
+  padding-top: 12px;
+}
+
+.project-support > svg {
+  color: var(--console-amber);
+}
+
 .maintenance-view {
   max-width: 720px;
 }

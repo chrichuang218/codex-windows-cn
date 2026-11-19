@@ -115,12 +115,30 @@ fn non_network_failures_keep_their_original_reason() {
         "安装已取消",
         "写入安装包失败：磁盘空间不足",
         "creating install root: Access is denied.",
+        r"removing old D:\Codex\versions\2.0: Access is denied. (os error 5)",
+        r"rename D:\Codex\versions\2.0.partial -> D:\Codex\versions\2.0: File not found. (os error 2)",
         "DisplayCatalog lookup failed: error decoding response body: expected value at line 1 column 1",
     ] {
         let install = install_event_from_msg(InstallMsg::Error(raw.into()));
         let update = update_event_from_msg(InstallMsg::Error(raw.into()));
         assert_eq!(install.message.as_deref(), Some(raw));
         assert_eq!(update.message.as_deref(), Some(raw));
+    }
+}
+
+#[test]
+fn blocked_version_rename_shows_recovery_steps_and_keeps_copyable_details() {
+    for raw in [
+        r"rename D:\Program Files\Codex\versions\2.0.partial -> D:\Program Files\Codex\versions\2.0: 拒绝访问。 (os error 5)",
+        r"系统更新失败：rename C:\Codex\versions\2.0.partial -> C:\Codex\versions\2.0: The process cannot access the file. (os error 32)",
+    ] {
+        let install = install_event_from_msg(InstallMsg::Error(raw.into()));
+        let update = update_event_from_msg(InstallMsg::Error(raw.into()));
+        let expected = "安装包已解压，但 Windows 无法重命名版本目录。请关闭正在使用该目录的程序后重试。若仍失败，请检查安装目录的修改权限。";
+        assert_eq!(install.message.as_deref(), Some(expected));
+        assert_eq!(update.message.as_deref(), Some(expected));
+        assert_eq!(install.detail, raw);
+        assert_eq!(update.detail, raw);
     }
 }
 

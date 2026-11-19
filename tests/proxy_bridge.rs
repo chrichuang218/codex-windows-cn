@@ -106,6 +106,18 @@ fn launched_outcome_reports_the_resolved_product() {
 }
 
 #[test]
+fn focused_outcome_confirms_an_existing_window() {
+    let result = launch_result_from_outcome(LaunchOutcome::Focused {
+        version: "26.707.3748.0".into(),
+        app_kind: AppKind::ChatGpt,
+    });
+    assert!(result.launched);
+    assert!(!result.switch_required);
+    assert_eq!(result.version.as_deref(), Some("26.707.3748.0"));
+    assert_eq!(result.message, "已切到 ChatGPT 窗口");
+}
+
+#[test]
 fn version_settings_are_persisted_and_returned_in_inventory() {
     let root = TestRoot::new("retention-persistence");
     root.write_codex_exe("1.0.0");

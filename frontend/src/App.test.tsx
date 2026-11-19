@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { App } from "./App";
 import { LoadingSplash } from "./components/Shell";
@@ -281,7 +281,10 @@ describe("Codex Windows 中文助手 shell", () => {
     const checkUpdateStatus = vi.fn(async () => updateStatus);
     const checkLauncherUpdateStatus = vi.fn(async () => launcherUpdateStatus);
     const getVersionInventory = vi.fn(async () => versionInventory);
-    render(<App bridge={makeBridge({ installed: true, checkUpdateStatus, checkLauncherUpdateStatus, getVersionInventory })} />);
+    const getRunningVersions = vi.fn(async () => []);
+    render(<App bridge={makeBridge({
+      installed: true, checkUpdateStatus, checkLauncherUpdateStatus, getVersionInventory, getRunningVersions
+    })} />);
     await screen.findByRole("heading", { name: "1.2.0" });
     checkUpdateStatus.mockClear();
     checkLauncherUpdateStatus.mockClear();
@@ -291,8 +294,13 @@ describe("Codex Windows 中文助手 shell", () => {
       expect(screen.getByRole("button", { name })).toHaveAttribute("aria-current", "page");
     }
     expect(getVersionInventory).not.toHaveBeenCalled();
-    fireEvent.focus(window);
-    fireEvent(document, new Event("visibilitychange"));
+    getRunningVersions.mockClear();
+    await act(async () => {
+      fireEvent.focus(window);
+      fireEvent(document, new Event("visibilitychange"));
+    });
+    expect(getRunningVersions).toHaveBeenCalledOnce();
+    expect(getVersionInventory).not.toHaveBeenCalled();
     expect(checkUpdateStatus).not.toHaveBeenCalled();
     expect(checkLauncherUpdateStatus).not.toHaveBeenCalled();
   });
@@ -887,11 +895,12 @@ describe("Codex Windows 中文助手 shell", () => {
     fireEvent.click(await screen.findByRole("button", { name: "立即更新" }));
     act(() => {
       emitUpdate?.({
-        kind: "progress", title: "正在下载更新", detail: "第 1/3 次尝试 · 6 / 10 MB",
+        kind: "progress", title: "正在下载更新", detail: "6 / 10 MB",
         progress: 0.6, version: null, message: null
       });
     });
     expect(await screen.findByText("60%")).toBeVisible();
+    expect(screen.getByText("6 / 10 MB")).toBeVisible();
     act(() => {
       emitUpdate?.({
         kind: "progress", title: "正在下载更新", detail: "正在获取官方下载地址（第 2/3 次尝试）。",
@@ -988,25 +997,47 @@ describe("Codex Windows 中文助手 shell", () => {
 
   test("running version status refreshes after the managed main process exits", async () => {
     let running = true;
+    const getRunningVersions = vi.fn(async () => running ? ["1.2.0"] : []);
+    const getVersionInventory = vi.fn(async () => ({
+      ...versionInventory,
+      runningVersions: ["1.2.0"],
+      versions: versionInventory.versions.map((item) =>
+        item.version === "1.2.0" ? { ...item, isRunning: true, canDelete: false } : item
+      )
+    }));
+    const launchCodex = vi.fn(async () => ({
+      ...launchedResult,
+      message: "已切到 ChatGPT 窗口"
+    }));
     const bridge = makeBridge({
       installed: true,
-      getVersionInventory: async () => ({
-        ...versionInventory,
-        runningVersions: running ? ["1.2.0"] : [],
-        versions: versionInventory.versions.map((item) =>
-          item.version === "1.2.0"
-            ? { ...item, isRunning: running, canDelete: !running }
-            : item
-        )
-      })
+      launchCodex,
+      getVersionInventory,
+      getRunningVersions
     });
 
     render(<App bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("button", { name: "回到 ChatGPT" }));
+    expect(await screen.findByText("已切到 ChatGPT 窗口")).toBeVisible();
+    expect(launchCodex).toHaveBeenLastCalledWith({ version: null, switchRunning: false });
+
     fireEvent.click(await screen.findByRole("button", { name: "版本" }));
     expect(await screen.findByText("运行中")).toBeVisible();
+    expect(screen.getByRole("button", { name: "删除 ChatGPT 1.2.0" })).toBeDisabled();
+    const showWindow = await screen.findByRole("button", { name: "显示 ChatGPT 1.2.0 的窗口" });
+    expect(showWindow).toHaveAttribute("title", "显示此版本的窗口");
+    fireEvent.click(showWindow);
+    expect(await screen.findByText("已切到 ChatGPT 窗口")).toBeVisible();
+    expect(launchCodex).toHaveBeenLastCalledWith({ version: "1.2.0", switchRunning: false });
 
     running = false;
     await waitFor(() => expect(screen.queryByText("运行中")).toBeNull(), { timeout: 2500 });
+    expect(screen.getByRole("button", { name: "启动 ChatGPT 1.2.0" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "删除 ChatGPT 1.2.0" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "概览" }));
+    expect(screen.getByRole("button", { name: "启动 ChatGPT" })).toBeVisible();
+    expect(getRunningVersions.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(getVersionInventory).toHaveBeenCalledOnce();
   });
 
   test("switching versions requires confirmation before closing the running version", async () => {
@@ -1166,11 +1197,30 @@ describe("Codex Windows 中文助手 shell", () => {
     expect(screen.getByRole("group", { name: "启动时检查更新频率" })).toBeVisible();
   });
 
+  test("settings offer a GitHub Star action and report when it cannot open", async () => {
+    const openProjectRepository = vi.fn()
+      .mockRejectedValueOnce(new Error("无法在浏览器中打开项目仓库"))
+      .mockResolvedValue(undefined);
+    render(<App bridge={makeBridge({ installed: true, openProjectRepository })} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+    const support = await screen.findByRole("region", { name: "支持项目" });
+    const action = within(support).getByRole("button", { name: "去 GitHub 点 Star" });
+    expect(openProjectRepository).not.toHaveBeenCalled();
+    fireEvent.click(action);
+    expect(await screen.findByText("无法在浏览器中打开项目仓库")).toBeVisible();
+    await act(async () => { fireEvent.click(action); });
+    expect(openProjectRepository).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("无法在浏览器中打开项目仓库")).toBeNull();
+  });
+
   test("settings keep an unsaved keep-all selection while inventory refreshes", async () => {
     let inventoryReads = 0;
     let returnRefreshedInventory = false;
+    let emitUpdate!: (event: UpdateEvent) => void;
     const bridge = makeBridge({
       installed: true,
+      onUpdateEvent: (handler) => { emitUpdate = handler; return () => {}; },
       getVersionInventory: async () => {
         inventoryReads += 1;
         return {
@@ -1196,7 +1246,9 @@ describe("Codex Windows 中文助手 shell", () => {
 
     const readsBeforeRefresh = inventoryReads;
     returnRefreshedInventory = true;
-    fireEvent.focus(window);
+    act(() => emitUpdate({
+      kind: "done", title: "更新完成", detail: "安装成功", progress: 1, version: "1.2.0", message: null
+    }));
     await waitFor(() => expect(inventoryReads).toBeGreaterThan(readsBeforeRefresh));
     expect(
       await screen.findByRole("button", { name: "修复中文助手桌面入口" })
@@ -1212,8 +1264,10 @@ describe("Codex Windows 中文助手 shell", () => {
   test("settings ignore an inventory response started before a successful save", async () => {
     let inventoryReads = 0;
     let resolveStaleRefresh: ((inventory: VersionInventory) => void) | null = null;
+    let emitUpdate!: (event: UpdateEvent) => void;
     const bridge = makeBridge({
       installed: true,
+      onUpdateEvent: (handler) => { emitUpdate = handler; return () => {}; },
       getVersionInventory: async () => {
         inventoryReads += 1;
         if (inventoryReads === 1) {
@@ -1233,7 +1287,9 @@ describe("Codex Windows 中文助手 shell", () => {
     render(<App bridge={bridge} />);
     await screen.findByRole("heading", { name: "1.2.0" });
     fireEvent.click(await screen.findByRole("button", { name: "设置" }));
-    fireEvent.focus(window);
+    act(() => emitUpdate({
+      kind: "done", title: "更新完成", detail: "安装成功", progress: 1, version: "1.2.0", message: null
+    }));
     await waitFor(() => expect(resolveStaleRefresh).not.toBeNull());
 
     fireEvent.click(screen.getByRole("button", { name: "全部保留" }));
@@ -2008,6 +2064,8 @@ function makeBridge(
     launchCodex: async () => launchedResult,
     launchInstalledCodex: async () => launchedResult,
     getVersionInventory: async () => versionInventory,
+    getRunningVersions: async () => [],
+    openProjectRepository: async () => {},
     deleteInstalledVersion: async (version) => ({
       applied: true,
       message: `已删除版本 ${version}`,

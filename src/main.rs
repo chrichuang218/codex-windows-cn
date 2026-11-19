@@ -268,6 +268,49 @@ fn get_version_inventory_blocking() -> Result<VersionInventory, String> {
 }
 
 #[tauri::command]
+fn open_project_repository() -> Result<(), String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_NORMAL};
+
+    let url: Vec<u16> = format!("https://github.com/{}", updater::LAUNCHER_REPO)
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let result = unsafe {
+        ShellExecuteW(
+            HWND::default(),
+            w!("open"),
+            PCWSTR(url.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_NORMAL,
+        )
+    };
+    let code = result.0 as isize;
+    if code <= 32 {
+        return Err(format!(
+            "无法在浏览器中打开项目仓库（Windows 错误码 {code}）"
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_running_versions() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let root = mode::install_root().map_err(|cause| format!("无法读取安装目录：{cause:#}"))?;
+        let mut versions: Vec<_> = proxy::running_versions(&root.join("versions"))
+            .into_iter()
+            .collect();
+        versions.sort_unstable();
+        Ok(versions)
+    })
+    .await
+    .map_err(|cause| format!("读取运行状态任务失败：{cause}"))?
+}
+
+#[tauri::command]
 fn save_version_settings(request: VersionSettingsRequest) -> Result<VersionActionResult, String> {
     let _guard = lock_runtime_config()?;
     let (root, mut cfg) = proxy_context()?;
@@ -1111,7 +1154,9 @@ fn run_cli_helper() -> Option<i32> {
                     .map_err(|cause| format!("启动应用失败：{cause:#}"))
             });
             match result {
-                Ok(proxy::LaunchOutcome::Launched { .. }) => Some(0),
+                Ok(
+                    proxy::LaunchOutcome::Launched { .. } | proxy::LaunchOutcome::Focused { .. },
+                ) => Some(0),
                 Ok(proxy::LaunchOutcome::SwitchRequired { .. }) => None,
                 Err(message) => {
                     dialogs::error(&format!(
@@ -1166,6 +1211,8 @@ fn main() {
             launch_codex,
             launch_installed_codex,
             get_version_inventory,
+            get_running_versions,
+            open_project_repository,
             save_version_settings,
             set_desktop_shortcut,
             set_assistant_desktop_shortcut,

@@ -161,7 +161,7 @@ fn update_inner(
     // holds runtime-current values like update_policy, skipped_version,
     // launcher_suppress_until_unix. save_install below clears the overlay,
     // so we must merge it in first or those choices vanish post-update.
-    let mut cfg = Config::load_runtime(root)
+    let cfg = Config::load_runtime(root)
         .with_context(|| format!("loading existing config at {}", root.display()))?;
 
     let downloads = root.join("downloads");
@@ -184,6 +184,15 @@ fn update_inner(
         )
     })?;
 
+    install_downloaded_update(root, result, on_msg, post_work_mode)
+}
+
+fn install_downloaded_update(
+    root: &Path,
+    result: DownloadResult,
+    on_msg: &dyn Fn(InstallMsg) -> Result<()>,
+    post_work_mode: PostWorkMode,
+) -> Result<String> {
     emit_progress_detail(
         on_msg,
         "Extracting",
@@ -209,7 +218,7 @@ fn update_inner(
     // Reload just before committing so settings changed while the large
     // download/extract was running are preserved instead of being overwritten
     // by the snapshot loaded at update start.
-    cfg = Config::load_runtime(root)
+    let mut cfg = Config::load_runtime(root)
         .with_context(|| format!("reloading runtime config at {}", root.display()))?;
     cfg.current_version = result.version.clone();
     cfg.known_latest = Some(result.version.clone());
@@ -737,18 +746,19 @@ fn download_with_retry(
     let mut attempt = 1;
     loop {
         check_cancel(cancel)?;
-        let direct_attempt = (fetcher == Fetcher::Direct).then_some(attempt);
-        if direct_attempt.is_some() {
-            emit_progress_detail(
-                on_msg,
-                "Downloading",
-                &format!("正在获取官方下载地址（第 {attempt}/{max_attempts} 次尝试）。"),
-                Some(0.0),
-            )?;
+        let retry_attempt = (attempt > 1).then_some(attempt);
+        if fetcher == Fetcher::Direct {
+            let detail = match retry_attempt {
+                Some(attempt) => {
+                    format!("正在获取官方下载地址（第 {attempt}/{max_attempts} 次尝试）。")
+                }
+                None => download_start_detail(fetcher),
+            };
+            emit_progress_detail(on_msg, "Downloading", &detail, Some(0.0))?;
         }
         check_cancel(cancel)?;
         // Invoke the entire download again so each attempt gets a fresh signed URL.
-        let result = download(&mut |done, total| boxed.progress_bytes(done, total, direct_attempt));
+        let result = download(&mut |done, total| boxed.progress_bytes(done, total, retry_attempt));
         check_cancel(cancel)?;
         let error = match result {
             Ok(result) => return Ok(result),
@@ -959,6 +969,60 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn blocked_version_rename_keeps_the_previous_update_config() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("codex-update-rename-{}", std::process::id()));
+        std::fs::create_dir(&root)?;
+        let config = r#"{"install_mode":"portable","current_version":"1.0.0","register_uninstall":false,"use_current_junction":false}"#;
+        let config_path = root.join(crate::config::CONFIG_FILENAME);
+        std::fs::write(&config_path, config)?;
+        let package = DownloadResult {
+            msix_path: root.join("fixture.msix"),
+            ..downloaded_package()
+        };
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&package.msix_path)?);
+        zip.start_file("app/Codex.exe", zip::write::SimpleFileOptions::default())?;
+        drop(zip.finish()?);
+
+        let versions = root.join("versions");
+        let staged = versions.join(format!("{}.partial", package.version));
+        let destination = versions.join(&package.version);
+        let held_file = RefCell::new(None);
+        let result = install_downloaded_update(
+            &root,
+            package,
+            &|event| {
+                if matches!(event, InstallMsg::ProgressDetail { phase, progress: Some(1.0), .. } if phase == "Extracting")
+                {
+                    held_file.replace(Some(std::fs::File::open(staged.join("Codex.exe"))?));
+                }
+                Ok(())
+            },
+            PostWorkMode::Inline,
+        );
+        drop(held_file);
+        let saved = std::fs::read_to_string(&config_path)?;
+        let finalized = destination.exists();
+        std::fs::remove_dir_all(root)?;
+
+        let error = result.unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(5)
+        );
+        assert_eq!(
+            error.to_string(),
+            format!("rename {} -> {}", staged.display(), destination.display())
+        );
+        assert_eq!(saved, config);
+        assert!(!finalized);
+        Ok(())
+    }
+
     #[test]
     fn direct_download_recovers_on_third_attempt_and_reports_fresh_progress() {
         let mut failures = VecDeque::from([
@@ -978,7 +1042,7 @@ mod tests {
             None,
             |progress| {
                 attempts.set(attempts.get() + 1);
-                progress(6, Some(10))?;
+                progress(6 * 1_048_576, Some(10 * 1_048_576))?;
                 match failures.pop_front() {
                     Some(error) => Err(error),
                     None => Ok(downloaded_package()),
@@ -989,7 +1053,15 @@ mod tests {
         assert_eq!(result.version, "1.2.3.0");
         assert_eq!(attempts.get(), 3);
         let events = events.borrow();
-        for attempt in 1..=3 {
+        assert!(matches!(&events[0],
+            InstallMsg::ProgressDetail { detail, progress: Some(0.0), .. }
+            if detail == "正在解析官方下载地址。"
+        ));
+        assert!(matches!(&events[1],
+            InstallMsg::ProgressDetail { detail, progress: Some(0.6), .. }
+            if detail == "6 / 10 MB"
+        ));
+        for attempt in 2..=3 {
             let label = format!("第 {attempt}/3 次尝试");
             assert!(
                 events.iter().any(|msg| matches!(msg,

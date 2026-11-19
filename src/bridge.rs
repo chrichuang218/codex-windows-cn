@@ -798,14 +798,20 @@ pub fn persist_version_settings(
 }
 
 pub fn launch_result_from_outcome(outcome: proxy::LaunchOutcome) -> ProxyLaunchResult {
+    let focused = matches!(&outcome, proxy::LaunchOutcome::Focused { .. });
     match outcome {
-        proxy::LaunchOutcome::Launched { version, app_kind } => ProxyLaunchResult {
+        proxy::LaunchOutcome::Launched { version, app_kind }
+        | proxy::LaunchOutcome::Focused { version, app_kind } => ProxyLaunchResult {
             launched: true,
             switch_required: false,
             version: Some(version.clone()),
             product_name: Some(app_kind.display_name().to_string()),
             running_versions: Vec::new(),
-            message: format!("已启动 {} {version}", app_kind.display_name()),
+            message: if focused {
+                format!("已切到 {} 窗口", app_kind.display_name())
+            } else {
+                format!("已启动 {} {version}", app_kind.display_name())
+            },
         },
         proxy::LaunchOutcome::SwitchRequired {
             running_versions,
@@ -1059,6 +1065,12 @@ fn launcher_skip_message(reason: &str) -> String {
 
 fn install_error_message(raw: &str) -> String {
     let lower = raw.to_ascii_lowercase();
+    if lower.contains("rename ")
+        && lower.contains(".partial -> ")
+        && (lower.ends_with("(os error 5)") || lower.ends_with("(os error 32)"))
+    {
+        return "安装包已解压，但 Windows 无法重命名版本目录。请关闭正在使用该目录的程序后重试。若仍失败，请检查安装目录的修改权限。".into();
+    }
     if lower.contains("winget download failed") {
         return "winget 下载失败，请查看错误详情后重试。".into();
     }

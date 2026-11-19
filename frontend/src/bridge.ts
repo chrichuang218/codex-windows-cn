@@ -253,6 +253,8 @@ export type AppBridge = {
   launchCodex: (request?: LaunchRequest) => Promise<ProxyLaunchResult>;
   launchInstalledCodex: (request: LaunchInstalledRequest) => Promise<ProxyLaunchResult>;
   getVersionInventory: () => Promise<VersionInventory>;
+  getRunningVersions: () => Promise<string[]>;
+  openProjectRepository: () => Promise<void>;
   deleteInstalledVersion: (version: string) => Promise<VersionActionResult>;
   saveVersionSettings: (request: VersionSettingsRequest) => Promise<VersionActionResult>;
   setDesktopShortcut: (enabled: boolean) => Promise<DesktopShortcutActionResult>;
@@ -499,6 +501,19 @@ export const tauriBridge: AppBridge = {
       });
     }
     return invoke<VersionInventory>("get_version_inventory");
+  },
+  getRunningVersions: () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      return Promise.resolve(fallbackVersionInventory.runningVersions);
+    }
+    return invoke<string[]>("get_running_versions");
+  },
+  openProjectRepository: async () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      window.open("https://github.com/chrichuang218/codex-windows-cn", "_blank", "noopener,noreferrer");
+      return;
+    }
+    await invoke<void>("open_project_repository");
   },
   deleteInstalledVersion: (version) => {
     if (!("__TAURI_INTERNALS__" in window)) {

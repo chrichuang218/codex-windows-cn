@@ -1,4 +1,5 @@
 import {
+  AppWindow,
   ArrowLeft,
   CheckCircle2,
   ChevronDown,
@@ -19,6 +20,7 @@ import {
   Rocket,
   Settings2,
   ShieldCheck,
+  Star,
   Trash2,
   X
 } from "lucide-react";
@@ -83,12 +85,14 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
   } = controller;
   const [inventory, setInventory] = useState<VersionInventory | null>(null);
   const [inventoryError, setInventoryError] = useState<string | null>(null);
+  const [observedRunningVersions, setObservedRunningVersions] = useState<string[] | null>(null);
+  const [runningStatusError, setRunningStatusError] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<Feedback | null>(null);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [pendingSwitch, setPendingSwitch] = useState<PendingSwitch | null>(null);
   const [pendingDelete, setPendingDelete] = useState<InstalledVersionStatus | null>(null);
   const inventoryGeneration = useRef(0);
-  const inventoryPending = useRef(false);
+  const runningRequest = useRef<Promise<string[]> | null>(null);
 
   const commitInventory = useCallback((next: VersionInventory) => {
     inventoryGeneration.current += 1;
@@ -97,8 +101,6 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
   }, []);
 
   const refreshInventory = useCallback(async () => {
-    if (inventoryPending.current) return;
-    inventoryPending.current = true;
     const generation = inventoryGeneration.current + 1;
     inventoryGeneration.current = generation;
     try {
@@ -113,8 +115,30 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
         return;
       }
       setInventoryError(errorMessage(cause, "无法读取本机版本"));
+    }
+  }, [bridge]);
+
+  const refreshRunningVersions = useCallback(async (afterLaunch = false) => {
+    if (runningRequest.current && !afterLaunch) return;
+    const request = bridge.getRunningVersions();
+    runningRequest.current = request;
+    try {
+      const next = await request;
+      if (runningRequest.current !== request) return;
+      setObservedRunningVersions((current) =>
+        current && current.length === next.length && next.every((version, index) => version === current[index])
+          ? current
+          : next
+      );
+      setRunningStatusError(null);
+    } catch (cause) {
+      if (runningRequest.current === request) {
+        setRunningStatusError(errorMessage(cause, "无法读取运行状态"));
+      }
     } finally {
-      inventoryPending.current = false;
+      if (runningRequest.current === request) {
+        runningRequest.current = null;
+      }
     }
   }, [bridge]);
 
@@ -123,18 +147,19 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
   }, [refreshInventory]);
 
   useEffect(() => {
-    const refreshVisibleInventory = () => {
+    const refreshVisibleStatus = () => {
       if (document.visibilityState === "visible") {
-        void refreshInventory();
+        void refreshRunningVersions();
       }
     };
-    const timer = window.setInterval(refreshVisibleInventory, 1000);
-    window.addEventListener("focus", refreshVisibleInventory);
+    const timer = window.setInterval(refreshVisibleStatus, 1000);
+    window.addEventListener("focus", refreshVisibleStatus);
     return () => {
       window.clearInterval(timer);
-      window.removeEventListener("focus", refreshVisibleInventory);
+      window.removeEventListener("focus", refreshVisibleStatus);
+      runningRequest.current = null;
     };
-  }, [refreshInventory]);
+  }, [refreshRunningVersions]);
 
   useEffect(() => {
     setActionFeedback(null);
@@ -151,7 +176,10 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
   const assistantName = "Codex Windows 中文助手";
   const launcherUpdateAvailable = controller.launcherUpdateStatus.kind === "available";
   const defaultVersion = inventory ? inventory.defaultVersion : proxyStatus.currentVersion;
-  const runningVersion = inventory?.runningVersions[0] ?? proxyStatus.runningVersions[0] ?? null;
+  const runningVersions = observedRunningVersions ?? inventory?.runningVersions ?? proxyStatus.runningVersions;
+  const runningVersion = defaultVersion && runningVersions.includes(defaultVersion)
+    ? defaultVersion
+    : runningVersions[0] ?? null;
   const runningIsOld = Boolean(
     runningVersion && defaultVersion && runningVersion !== defaultVersion
   );
@@ -173,7 +201,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
       }
       setPendingSwitch(null);
       setActionFeedback({ message: result.message, tone: "success" });
-      await refreshInventory();
+      await refreshRunningVersions(true);
     } catch (cause) {
       setActionFeedback({ message: errorMessage(cause, "启动失败"), tone: "error" });
     } finally {
@@ -308,7 +336,7 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
               controller={controller}
               defaultVersion={defaultVersion}
               inventory={inventory}
-              inventoryError={inventoryError}
+              inventoryError={inventoryError ?? runningStatusError}
               onLaunch={() => void launchVersion(null)}
               onSwitchLatest={() => void launchVersion(null)}
               productName={productName}
@@ -322,6 +350,8 @@ export function InstalledWorkspace({ controller }: { controller: ReadyAppControl
               busy={busyAction}
               inventory={inventory}
               inventoryError={inventoryError}
+              runningStatusError={runningStatusError}
+              runningVersions={runningVersions}
               onDelete={setPendingDelete}
               onLaunch={(version) => void launchVersion(version)}
             />
@@ -413,6 +443,8 @@ function OverviewPanel({
 
   const updating = updateState !== "idle" && Boolean(updateEvent);
   const checking = controller.manualUpdateChecking;
+  const returning = defaultVersion !== null && defaultVersion === runningVersion;
+  const LaunchIcon = returning ? AppWindow : Play;
   const totalSize = inventory?.versions.reduce((sum, item) => sum + item.sizeBytes, 0) ?? 0;
   const deferActions = updateDeferActionOrder.filter((action) =>
     updateStatus.actions.includes(action)
@@ -457,8 +489,10 @@ function OverviewPanel({
           onClick={onLaunch}
           type="button"
         >
-          {busy ? <LoaderCircle className="spin" size={20} /> : <Play size={20} fill="currentColor" />}
-          {busy ? "启动中" : `启动 ${productName}`}
+          {busy ? <LoaderCircle className="spin" size={20} /> : (
+            <LaunchIcon size={20} fill={returning ? "none" : "currentColor"} aria-hidden="true" />
+          )}
+          {busy ? (returning ? "正在打开窗口" : "启动中") : `${returning ? "回到" : "启动"} ${productName}`}
         </button>
       </div>
 
@@ -589,6 +623,8 @@ function VersionsPanel({
   busy,
   inventory,
   inventoryError,
+  runningStatusError,
+  runningVersions,
   onDelete,
   onLaunch
 }: {
@@ -596,6 +632,8 @@ function VersionsPanel({
   busy: BusyAction;
   inventory: VersionInventory | null;
   inventoryError: string | null;
+  runningStatusError: string | null;
+  runningVersions: string[];
   onDelete: (version: InstalledVersionStatus) => void;
   onLaunch: (version: string) => void;
 }) {
@@ -610,6 +648,7 @@ function VersionsPanel({
       </div>
 
       {feedback ? <StatusMessage tone={feedback.tone}>{feedback.message}</StatusMessage> : null}
+      {runningStatusError ? <StatusMessage tone="error">{runningStatusError}</StatusMessage> : null}
 
       <div className="version-list" role="list">
         {!inventory && !inventoryError ? (
@@ -619,51 +658,57 @@ function VersionsPanel({
         {inventory && inventory.versions.length === 0 ? (
           <div className="empty-state">未找到可启动版本</div>
         ) : null}
-        {inventory?.versions.map((item) => (
-          <div className="version-row" key={item.version} role="listitem">
-            <div className={`version-mark ${item.appKind === "chatGpt" ? "chatgpt" : "codex"}`}>
-              {item.appKind === "chatGpt" ? "G" : "C"}
+        {inventory?.versions.map((item, _, versions) => {
+          const isRunning = runningVersions.includes(item.version);
+          const canDelete = versions.length > 1 && !isRunning;
+          return (
+            <div className="version-row" key={item.version} role="listitem">
+              <div className={`version-mark ${item.appKind === "chatGpt" ? "chatgpt" : "codex"}`}>
+                {item.appKind === "chatGpt" ? "G" : "C"}
+              </div>
+              <div className="version-identity">
+                <strong>{item.version}</strong>
+                <span>{item.productName}</span>
+                {!canDelete ? (
+                  <small className="version-note">
+                    {isRunning ? "运行中的版本不可删除" : "当前版本不可删除"}
+                  </small>
+                ) : null}
+              </div>
+              <div className="version-meta">
+                <span>{formatBytes(item.sizeBytes)}</span>
+                <span>{formatDate(item.installedAtUnix)}</span>
+              </div>
+              <div className="version-flags">
+                {item.isDefault ? <span className="flag latest">最新版</span> : null}
+                {isRunning ? <span className="flag running">运行中</span> : null}
+              </div>
+              <div className="row-actions">
+                <button
+                  aria-label={isRunning
+                    ? `显示 ${item.productName} ${item.version} 的窗口`
+                    : `启动 ${item.productName} ${item.version}`}
+                  disabled={busy !== null}
+                  onClick={() => onLaunch(item.version)}
+                  title={isRunning ? "显示此版本的窗口" : "启动此版本"}
+                  type="button"
+                >
+                  {isRunning ? <AppWindow size={16} aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
+                </button>
+                <button
+                  aria-label={`删除 ${item.productName} ${item.version}`}
+                  className="danger-icon"
+                  disabled={!canDelete || busy !== null}
+                  onClick={() => onDelete(item)}
+                  title={canDelete ? "删除此版本" : "当前版本不可删除"}
+                  type="button"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
             </div>
-            <div className="version-identity">
-              <strong>{item.version}</strong>
-              <span>{item.productName}</span>
-              {!item.canDelete ? (
-                <small className="version-note">
-                  {item.isRunning ? "运行中的版本不可删除" : "当前版本不可删除"}
-                </small>
-              ) : null}
-            </div>
-            <div className="version-meta">
-              <span>{formatBytes(item.sizeBytes)}</span>
-              <span>{formatDate(item.installedAtUnix)}</span>
-            </div>
-            <div className="version-flags">
-              {item.isDefault ? <span className="flag latest">最新版</span> : null}
-              {item.isRunning ? <span className="flag running">运行中</span> : null}
-            </div>
-            <div className="row-actions">
-              <button
-                aria-label={`启动 ${item.productName} ${item.version}`}
-                disabled={busy !== null}
-                onClick={() => onLaunch(item.version)}
-                title="启动此版本"
-                type="button"
-              >
-                <Play size={16} />
-              </button>
-              <button
-                aria-label={`删除 ${item.productName} ${item.version}`}
-                className="danger-icon"
-                disabled={!item.canDelete || busy !== null}
-                onClick={() => onDelete(item)}
-                title={item.canDelete ? "删除此版本" : "当前版本不可删除"}
-                type="button"
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
@@ -688,7 +733,7 @@ function SettingsPanel({
   onSetDesktopShortcut: (enabled: boolean) => Promise<Feedback>;
   saving: boolean;
 }) {
-  const { launcherUpdateCheckReady, launcherUpdateStatus, setWorkspacePanel } = controller;
+  const { bridge, launcherUpdateCheckReady, launcherUpdateStatus, setWorkspacePanel } = controller;
   const launcherUpdateSummary = formatLauncherUpdateSummary(
     launcherUpdateStatus,
     launcherUpdateCheckReady
@@ -704,6 +749,7 @@ function SettingsPanel({
   const [shortcutFeedback, setShortcutFeedback] = useState<Feedback | null>(null);
   const [assistantShortcutFeedback, setAssistantShortcutFeedback] =
     useState<Feedback | null>(null);
+  const [projectLinkError, setProjectLinkError] = useState<string | null>(null);
   const editRevision = useRef(0);
   const savedKeepAll = inventory?.keepAllVersions;
   const savedCount = inventory?.keepVersions;
@@ -754,6 +800,15 @@ function SettingsPanel({
       setAssistantShortcutFeedback(await onSetAssistantDesktopShortcut(enabled));
     } finally {
       setAssistantShortcutIntent(null);
+    }
+  };
+
+  const openProjectRepository = async () => {
+    setProjectLinkError(null);
+    try {
+      await bridge.openProjectRepository();
+    } catch (cause) {
+      setProjectLinkError(errorMessage(cause, "无法打开项目仓库"));
     }
   };
 
@@ -903,6 +958,18 @@ function SettingsPanel({
           <span><strong>卸载助手</strong><small>保留登录和项目数据</small></span>
         </button>
       </section>
+
+      <section className="project-support" aria-label="支持项目">
+        <Star size={17} aria-hidden="true" />
+        <div className="settings-copy">
+          <strong>支持项目</strong>
+          <span>用得顺手的话，欢迎留一颗 Star。</span>
+        </div>
+        <button className="button subtle" onClick={() => void openProjectRepository()} type="button">
+          去 GitHub 点 Star <ExternalLink size={15} aria-hidden="true" />
+        </button>
+      </section>
+      {projectLinkError ? <StatusMessage tone="error">{projectLinkError}</StatusMessage> : null}
     </section>
   );
 }

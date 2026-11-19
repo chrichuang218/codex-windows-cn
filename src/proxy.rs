@@ -1,8 +1,8 @@
 //! Proxy-mode runtime: resolve the newest installed Codex.exe (self-healing
 //! the `versions/current` junction if needed) and spawn it with the caller's
-//! args + inherited env. We always spawn — Codex's own chromium-derived
-//! ProcessSingleton handles the "already running, focus instead" case via
-//! its named-pipe handoff. Before spawning we probe for the singleton's
+//! args + inherited env. Prefer the existing window on a plain launch of a
+//! running version. If it has no visible window, Codex can handle a spawn
+//! via its ProcessSingleton handoff. Before spawning we probe for the singleton's
 //! hidden message window so we can warn the user if a *foreign* Codex
 //! install is currently the lock holder (their window will get focused
 //! instead of ours).
@@ -15,6 +15,10 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchOutcome {
     Launched {
+        version: String,
+        app_kind: crate::versions::AppKind,
+    },
+    Focused {
         version: String,
         app_kind: crate::versions::AppKind,
     },
@@ -125,15 +129,14 @@ pub fn find_singleton_holder(_user_data_dir: &Path) -> Option<SingletonHolder> {
     None
 }
 
-/// Spawn Codex.exe with forwarded args. Always spawns — Codex's own
-/// ProcessSingleton handles the "already running" case via pipe handoff,
-/// transferring focus to the lock-holder. Before spawning we check the
+/// Open the managed app, forwarding any arguments through its ordinary
+/// launch path. Before spawning we check the
 /// singleton; if a *foreign* install holds it, we MessageBox the user so
 /// they understand why their click may surface that other install's window
 /// instead of ours.
 pub fn launch(root: &Path, use_current_junction: bool, forward_args: &[String]) -> Result<()> {
     match launch_version(root, use_current_junction, None, false, forward_args)? {
-        LaunchOutcome::Launched { .. } => Ok(()),
+        LaunchOutcome::Launched { .. } | LaunchOutcome::Focused { .. } => Ok(()),
         LaunchOutcome::SwitchRequired {
             running_versions,
             target_version,
@@ -155,6 +158,17 @@ pub fn launch_version(
         crate::versions::resolve_launch_target(root, use_current_junction, requested_version)?;
     let versions_root = root.join("versions");
     let running = running_versions(&versions_root);
+    if !switch_running
+        && forward_args.is_empty()
+        && running.contains(&target.version)
+        && focus_running_version(&versions_root, &target.version)
+    {
+        return Ok(LaunchOutcome::Focused {
+            version: target.version,
+            app_kind: target.app_kind,
+        });
+    }
+
     let mut different: Vec<String> = running
         .iter()
         .filter(|version| version.as_str() != target.version)
@@ -315,11 +329,70 @@ pub fn find_our_codex_pids(_versions_root: &Path) -> Vec<u32> {
 }
 
 pub fn running_versions(versions_root: &Path) -> HashSet<String> {
-    find_codex_pids()
-        .into_iter()
-        .filter_map(process_image_path)
-        .filter_map(|path| running_version_from_process_path(versions_root, &path))
+    running_version_processes(versions_root)
+        .map(|(_, version)| version)
         .collect()
+}
+
+fn running_version_processes(versions_root: &Path) -> impl Iterator<Item = (u32, String)> + '_ {
+    find_codex_pids().into_iter().filter_map(move |pid| {
+        let path = process_image_path(pid)?;
+        let version = running_version_from_process_path(versions_root, &path)?;
+        Some((pid, version))
+    })
+}
+
+#[cfg(windows)]
+fn focus_running_version(versions_root: &Path, target_version: &str) -> bool {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic,
+        IsWindowVisible, SetForegroundWindow, ShowWindowAsync, GWL_EXSTYLE, GW_OWNER, SW_RESTORE,
+        WS_EX_TOOLWINDOW,
+    };
+
+    struct WindowSearch {
+        pids: HashSet<u32>,
+        window: Option<HWND>,
+    }
+
+    unsafe extern "system" fn find_window(window: HWND, data: LPARAM) -> BOOL {
+        let search = &mut *(data.0 as *mut WindowSearch);
+        let mut pid = 0;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        if search.pids.contains(&pid)
+            && IsWindowVisible(window).as_bool()
+            && GetWindow(window, GW_OWNER).is_err()
+            && GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOOLWINDOW.0 as isize == 0
+        {
+            search.window = Some(window);
+            return false.into();
+        }
+        true.into()
+    }
+
+    let mut search = WindowSearch {
+        pids: running_version_processes(versions_root)
+            .filter_map(|(pid, version)| (version == target_version).then_some(pid))
+            .collect(),
+        window: None,
+    };
+    unsafe {
+        // A missing or inaccessible window can still be opened via ProcessSingleton.
+        let _ = EnumWindows(Some(find_window), LPARAM(&mut search as *mut _ as isize));
+        let Some(window) = search.window else {
+            return false;
+        };
+        if IsIconic(window).as_bool() && !ShowWindowAsync(window, SW_RESTORE).as_bool() {
+            return false;
+        }
+        SetForegroundWindow(window).as_bool()
+    }
+}
+
+#[cfg(not(windows))]
+fn focus_running_version(_versions_root: &Path, _target_version: &str) -> bool {
+    false
 }
 
 fn running_version_from_process_path(versions_root: &Path, process_path: &Path) -> Option<String> {
